@@ -1,0 +1,10 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"fp8 KV, no drafter",code greedy,0.0,81,0.06,1254.1,512,122.64,,,length,4.2
+"fp8 KV, no drafter",code temp1,1.0,84,0.06,1307.1,512,122.63,,,length,4.2
+"fp8 KV, no drafter",prose greedy,0.0,71,0.07,1058.4,512,122.62,,,length,4.2
+"fp8 KV, no drafter",json tools greedy,0.0,108,0.06,1676.7,178,123.68,,,stop,1.5
+"fp8 KV, no drafter",deep 8000,0.0,8180,3.55,2306.1,134,119.29,5,5,stop,4.7
+"fp8 KV, no drafter",deep 24000,0.0,24175,11.26,2146.2,162,111.46,5,5,stop,12.7
+"fp8 KV, no drafter",deep 32000,0.0,32178,15.36,2094.5,182,108.03,5,5,stop,17.0
+"fp8 KV, no drafter",deep 64000,0.0,64173,33.41,1920.8,188,96.16,5,5,stop,35.4
+"fp8 KV, no drafter",deep 120000,0.0,120173,71.49,1681.1,199,81.19,5,5,stop,73.9

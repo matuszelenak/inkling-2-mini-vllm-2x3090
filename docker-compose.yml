@@ -1,0 +1,111 @@
+# ============================================================================
+# Inkling 2 Mini (Thinking Machines, 2026-11-20) on vLLM, two RTX 3090s.
+#
+# NOT SUPPORTED UPSTREAM: vLLM targets Blackwell, Hopper and DGX Spark for
+# this model. This runs the official image with its Ampere blockers patched
+# out (see Dockerfile and README): Hopper code path, BF16 activations against
+# the native NVFP4 / MXFP8 expert weights, TP2 + EP2.
+#
+# ASSUMES AN NVLINK BRIDGE between the two GPUs: custom all-reduce is on
+# (no --disable-custom-all-reduce, no NCCL_P2P_DISABLE, no
+# expandable_segments). The model does 96 all-reduces per token. Two cards
+# without a bridge have not been tested with this file (README, "Other
+# setups").
+#
+# Measured 2026-11-21 with the tuning patch (BENCH.md): 143 tok/s decode
+# without the drafter and 170-306 with it; 134 tok/s at 24K depth, 107 at
+# 120K; prefill 6,700 tok/s at 24K and 5,170 at 120K; 747 tok/s aggregate at
+# 8 requests; GSM8K-200 98.0%.
+# ============================================================================
+services:
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: inkling-2-mini-vllm-2x3090:g7cb5dae22-tune1
+    container_name: vllm-inkling-2-mini-26b-nvfp4-sm86
+    command:
+      - --model
+      - thinkingmachines/Inkling-2-Mini
+      - --served-model-name
+      - inkling-2-mini
+      # === PARALLELISM ===
+      # TP2 with expert parallelism equal to TP: each card holds half the
+      # attention heads and 64 of the 128 experts (8.9 GiB of weights per
+      # card, 10.0 with drafter and vision tower). One card alone also works
+      # (95 tok/s) but leaves 4.4 GiB for KV, about 8.6K tokens of context.
+      - --tensor-parallel-size
+      - "2"
+      # === CONTEXT ===
+      # The KV pool at these settings is 225,883 tokens. 196,608 lets one
+      # request use most of it; filled to 120K in testing. Native is
+      # 1,048,576. Text only, the pool is larger: 262,144 with the drafter
+      # and 368,640 without it were booted and filled (README, "Long
+      # windows").
+      - --max-model-len
+      - "196608"
+      # 2048, and not more: the KV planner reserves per-request headroom on
+      # all 40 sliding-window caches in proportion to this. At 8192 a single
+      # 196K request needs 18.5 GiB of KV and the server refuses to start.
+      # Also the image ceiling: an image must fit the encoder cache (2,704
+      # tokens, about 2080x2080 px); larger images get a clean HTTP 400.
+      - --max-num-batched-tokens
+      - "2048"
+      # 8 concurrent requests. 16 also boots (1,120 tok/s aggregate) with a
+      # slightly smaller KV pool.
+      - --max-num-seqs
+      - "8"
+      # 0.92 leaves 1.3 GiB per card after a 120K fill, images and 8
+      # concurrent requests.
+      - --gpu-memory-utilization
+      - "0.92"
+      # KV stays bf16: the fp8 KV kernels in this build need sm_89+.
+      # === PARSERS ===
+      - --reasoning-parser
+      - inkling
+      - --tool-call-parser
+      - inkling
+      - --enable-auto-tool-choice
+      # === SPECULATIVE DECODING (bundled DSpark drafter, mtp.safetensors) ===
+      # 7 tokens are drafted every step (upstream's recipe). How many of them
+      # are verified: for one request, 2 to 7, chosen per step from recent
+      # acceptance (the tuning patch; INKLING_SM86_TUNE without "adaptive"
+      # fixes it at 7); for two or more requests, 3 (the schedule below,
+      # measured best at 2-16 requests). Unverified drafts are dropped, so
+      # the output distribution does not change. Delete the two lines below
+      # to turn the drafter off.
+      - --speculative-config
+      - '{"method":"dspark","num_speculative_tokens":7,"draft_sample_method":"probabilistic","num_speculative_tokens_per_batch_size":[[1,1,7],[2,16,3]]}'
+    ports:
+      # No API key is set. Publish on 127.0.0.1 only ("127.0.0.1:8000:8000")
+      # unless the network is trusted.
+      - "8000:8000"
+    volumes:
+      # The Hugging Face cache that holds the checkpoint, read-only.
+      - ~/.cache/huggingface:/root/.cache/huggingface:ro
+      # JIT caches (Triton kernels, Humming expert GEMMs, FlashInfer): boot is
+      # ~40 s with them and the model in page cache, minutes without.
+      - ~/.cache/vllm/inkling-2-mini-nvfp4-sm86/triton:/root/.triton/cache
+      - ~/.cache/vllm/inkling-2-mini-nvfp4-sm86/humming:/root/.humming
+      - ~/.cache/vllm/inkling-2-mini-nvfp4-sm86/flashinfer:/root/.cache/flashinfer
+    environment:
+      # The checkpoint is read from the read-only cache and never fetched at
+      # boot: download it first (README).
+      - HF_HUB_OFFLINE=1
+      # Keep NCCL's allocator from competing with vLLM's CUDA memory pool.
+      - NCCL_CUMEM_ENABLE=0
+      - OMP_NUM_THREADS=1
+      # No expandable_segments: custom all-reduce shares buffers over CUDA
+      # IPC, which that allocator cannot export.
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # The first two GPUs Docker sees. On a box with more cards, name
+            # the pair instead: replace `count: 2` with
+            # `device_ids: ["0", "1"]` (indices or GPU UUIDs).
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    ipc: host

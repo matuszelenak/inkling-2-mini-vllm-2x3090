@@ -1,0 +1,11 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+stock all-reduce limit (8 MiB),deep 8000,0.0,8177,1.16,7054.0,134,405.57,5,5,stop,1.5
+stock all-reduce limit (8 MiB),deep 8000,0.0,8174,1.15,7116.8,159,427.61,5,5,stop,1.5
+stock all-reduce limit (8 MiB),deep 24000,0.0,24178,3.57,6769.1,258,420.05,5,5,stop,4.2
+stock all-reduce limit (8 MiB),deep 32000,0.0,32174,4.84,6646.9,182,424.60,5,5,stop,5.3
+stock all-reduce limit (8 MiB),deep 64000,0.0,64172,10.62,6041.8,162,385.49,5,5,stop,11.0
+all-reduce limit 16 MiB,deep 8000,0.0,8177,1.15,7101.1,134,445.09,5,5,stop,1.5
+all-reduce limit 16 MiB,deep 8000,0.0,8174,1.14,7163.8,134,424.71,5,5,stop,1.5
+all-reduce limit 16 MiB,deep 24000,0.0,24176,3.57,6777.9,162,395.31,5,5,stop,4.0
+all-reduce limit 16 MiB,deep 32000,0.0,32177,4.84,6648.4,187,410.06,5,5,stop,5.3
+all-reduce limit 16 MiB,deep 64000,0.0,64178,10.63,6037.6,182,390.33,5,5,stop,11.1

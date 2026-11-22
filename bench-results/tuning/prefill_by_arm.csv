@@ -1,0 +1,29 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+prefill baseline (overlay off),deep 8000,0.0,8179,1.65,4963.6,134,342.54,5,5,stop,2.0
+prefill baseline (overlay off),deep 24000,0.0,24172,3.69,6553.5,162,360.74,5,5,stop,4.1
+prefill baseline (overlay off),deep 64000,0.0,64175,11.17,5746.2,134,316.28,5,5,stop,11.6
+prefill baseline (overlay off),deep 120000,0.0,120173,24.91,4825.2,188,331.53,5,5,stop,25.5
+far k=7,deep 8000,0.0,8177,2.47,3311.8,159,388.77,5,5,stop,2.9
+far k=7,deep 24000,0.0,24176,3.66,6604.6,134,348.26,5,5,stop,4.0
+far k=7,deep 64000,0.0,64175,10.90,5889.8,177,324.72,5,5,stop,11.4
+far k=7,deep 120000,0.0,120176,23.88,5033.4,188,331.52,5,5,stop,24.4
+far+ptiles(theirs) k=7,deep 8000,0.0,8176,2.63,3114.2,134,355.44,5,5,stop,3.0
+far+ptiles(theirs) k=7,deep 24000,0.0,24173,3.70,6534.4,162,348.82,5,5,stop,4.2
+far+ptiles(theirs) k=7,deep 64000,0.0,64176,10.99,5837.9,188,370.03,5,5,stop,11.5
+far+ptiles(theirs) k=7,deep 120000,0.0,120176,24.10,4987.3,193,329.88,5,5,stop,24.7
+"decode-tuned, mbt 2048",deep 8000,0.0,8176,1.18,6945.3,159,436.16,5,5,stop,1.5
+"decode-tuned, mbt 2048",deep 24000,0.0,24174,3.70,6524.7,288,441.25,5,5,stop,4.4
+"decode-tuned, mbt 2048",deep 64000,0.0,64176,11.19,5733.0,188,398.63,5,5,stop,11.7
+"decode-tuned, mbt 2048",deep 120000,0.0,120177,24.82,4842.3,144,309.99,5,5,stop,25.3
+"decode-tuned, mbt 1792 (custom all-reduce)",deep 8000,0.0,8175,1.34,6107.0,134,399.91,5,5,stop,1.7
+"decode-tuned, mbt 1792 (custom all-reduce)",deep 24000,0.0,24175,4.10,5894.8,207,380.61,5,5,stop,4.6
+"decode-tuned, mbt 1792 (custom all-reduce)",deep 64000,0.0,64177,12.47,5146.9,182,384.40,5,5,stop,12.9
+"decode-tuned, mbt 1792 (custom all-reduce)",deep 120000,0.0,120179,28.02,4288.8,162,348.37,5,5,stop,28.5
+decode-tuned + big humming,deep 8000,0.0,8178,1.15,7097.7,159,434.66,5,5,stop,1.5
+decode-tuned + big humming,deep 24000,0.0,24178,3.61,6694.4,162,402.70,5,5,stop,4.0
+decode-tuned + big humming,deep 64000,0.0,64172,10.94,5866.0,188,423.94,5,5,stop,11.4
+decode-tuned + big humming,deep 120000,0.0,120178,24.51,4903.5,144,309.11,5,5,stop,25.0
+final candidate k=7,deep 8000,0.0,8178,1.39,5890.0,159,443.98,5,5,stop,1.7
+final candidate k=7,deep 24000,0.0,24177,3.58,6761.8,134,412.48,5,5,stop,3.9
+final candidate k=7,deep 64000,0.0,64174,10.62,6040.8,162,384.19,5,5,stop,11.0
+final candidate k=7,deep 120000,0.0,120174,23.36,5144.4,162,353.76,5,5,stop,23.8

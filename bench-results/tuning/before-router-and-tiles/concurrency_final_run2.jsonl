@@ -1,0 +1,4 @@
+{"label": "tuned image, run 2", "concurrency": 1, "kind": "mixed", "tokens": 512, "agg_tps": 231.26635614816195, "per_stream_tps": 230.81466404631004}
+{"label": "tuned image, run 2", "concurrency": 2, "kind": "mixed", "tokens": 1024, "agg_tps": 323.19649683934745, "per_stream_tps": 181.8986339908061}
+{"label": "tuned image, run 2", "concurrency": 4, "kind": "mixed", "tokens": 2048, "agg_tps": 508.11788637675886, "per_stream_tps": 142.39842411255952}
+{"label": "tuned image, run 2", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 724.7829688374279, "per_stream_tps": 99.73833580064111}

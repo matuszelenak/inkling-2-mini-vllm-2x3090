@@ -1,0 +1,6 @@
+file,passed,failed,skipped,errors,failures_on_path,note
+test_core_ops.py,64,1,4,0,0,the failure is the fp8 KV variant of the attention prologue (fp8e4nv needs sm_89+); skips are SM12x-only cases
+test_attention.py,106,11,30,0,0,all 11 failures are fp8 KV variants; skips are the SM100-only split prefill
+test_moe.py,31,33,41,0,0,32 failures are the SM100/SM12x route and activation-quantization kernels (fp8e4nv); 1 is the test's own precondition at seed 0 (no local expert drawn; bitwise deterministic at seeds 1/2/3/5); skips are packed-activation expert GEMMs
+test_model.py,21,0,0,0,0,tiny looped model end to end incl. DSpark; memory fractions scaled for a 24 GiB card
+test_dspark.py,9,0,2,0,0,skips need 2 and 4 GPUs in one process group

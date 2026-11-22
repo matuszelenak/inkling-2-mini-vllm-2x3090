@@ -1,0 +1,21 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"tuned image, compose as shipped",code greedy,0.0,82,0.06,1467.9,512,208.00,,,length,2.5
+"tuned image, compose as shipped",code temp1,1.0,86,0.06,1539.8,512,201.39,,,length,2.6
+"tuned image, compose as shipped",prose greedy,0.0,67,0.05,1284.1,512,175.14,,,length,3.0
+"tuned image, compose as shipped",json tools greedy,0.0,111,0.06,1935.9,344,228.68,,,stop,1.6
+"tuned image, compose as shipped",deep 8000,0.0,8173,1.16,7027.8,134,405.53,5,5,stop,1.5
+"tuned image, compose as shipped",deep 24000,0.0,24173,3.61,6695.4,162,410.46,5,5,stop,4.0
+"tuned image, compose as shipped",deep 32000,0.0,32176,4.92,6546.3,182,424.19,5,5,stop,5.3
+"tuned image, compose as shipped",deep 48000,0.0,48177,7.72,6240.3,319,450.97,5,5,stop,8.4
+"tuned image, compose as shipped",deep 64000,0.0,64176,10.69,6001.2,177,405.19,5,5,stop,11.1
+"tuned image, compose as shipped",deep 120000,0.0,120176,23.25,5169.8,199,421.91,5,5,stop,23.7
+"tuned image, no drafter",code greedy,0.0,83,0.06,1402.2,512,143.48,,,length,3.6
+"tuned image, no drafter",code temp1,1.0,79,0.06,1299.2,512,143.36,,,length,3.6
+"tuned image, no drafter",prose greedy,0.0,68,0.06,1141.6,512,143.18,,,length,3.6
+"tuned image, no drafter",json tools greedy,0.0,114,0.08,1355.2,135,144.97,,,stop,1.0
+"tuned image, no drafter",deep 8000,0.0,8174,1.15,7077.8,159,139.01,5,5,stop,2.3
+"tuned image, no drafter",deep 24000,0.0,24179,3.58,6746.9,134,133.76,5,5,stop,4.6
+"tuned image, no drafter",deep 32000,0.0,32174,4.86,6621.1,174,130.55,5,5,stop,6.2
+"tuned image, no drafter",deep 48000,0.0,48175,7.63,6310.3,162,125.86,5,5,stop,8.9
+"tuned image, no drafter",deep 64000,0.0,64175,10.61,6047.3,134,121.40,5,5,stop,11.7
+"tuned image, no drafter",deep 120000,0.0,120176,23.06,5211.7,188,106.94,5,5,stop,24.8

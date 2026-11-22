@@ -1,0 +1,4 @@
+{"label": "tuned image, compose as shipped", "concurrency": 1, "kind": "mixed", "tokens": 512, "agg_tps": 232.46219313268438, "per_stream_tps": 232.0081654117221}
+{"label": "tuned image, compose as shipped", "concurrency": 2, "kind": "mixed", "tokens": 1024, "agg_tps": 323.31485965657, "per_stream_tps": 181.97968337968018}
+{"label": "tuned image, compose as shipped", "concurrency": 4, "kind": "mixed", "tokens": 2048, "agg_tps": 508.25997334662037, "per_stream_tps": 142.43228339434188}
+{"label": "tuned image, compose as shipped", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 739.7980484082228, "per_stream_tps": 104.13326428543351}

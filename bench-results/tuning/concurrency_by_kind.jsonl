@@ -1,0 +1,3 @@
+{"label": "tuned image, json only", "concurrency": 8, "kind": "json", "tokens": 4096, "agg_tps": 855.4699495717041, "per_stream_tps": 116.07139593530304}
+{"label": "tuned image, code only", "concurrency": 8, "kind": "code", "tokens": 4096, "agg_tps": 761.8604091700488, "per_stream_tps": 104.86369390679036}
+{"label": "tuned image, prose only", "concurrency": 8, "kind": "prose", "tokens": 4096, "agg_tps": 726.4216221253644, "per_stream_tps": 94.80124166519138}

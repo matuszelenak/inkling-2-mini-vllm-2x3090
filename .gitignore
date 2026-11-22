@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+
+# tools/fetch_rootfs.sh and tools/vrun.sh write these next to themselves
+tools/rootfs/
+tools/blobs/
+tools/cache/
+tools/work/
+tools/manifest.json
+tools/config.json
+tools/digests.txt
+tools/extract.err

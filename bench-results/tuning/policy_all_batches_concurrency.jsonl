@@ -1,0 +1,7 @@
+{"label": "tuned image, compose as shipped", "concurrency": 1, "kind": "mixed", "tokens": 512, "agg_tps": 240.33188636954742, "per_stream_tps": 239.8624881539819}
+{"label": "tuned image, compose as shipped", "concurrency": 2, "kind": "mixed", "tokens": 1024, "agg_tps": 303.48540241764175, "per_stream_tps": 165.0282942037839}
+{"label": "tuned image, compose as shipped", "concurrency": 4, "kind": "mixed", "tokens": 2048, "agg_tps": 499.97189263502037, "per_stream_tps": 145.12455491470575}
+{"label": "tuned image, compose as shipped", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 701.531603953565, "per_stream_tps": 101.241589122318}
+{"label": "tuned image, compose as shipped, json only", "concurrency": 8, "kind": "json", "tokens": 4095, "agg_tps": 855.8138559663329, "per_stream_tps": 117.32391263742552}
+{"label": "tuned image, compose as shipped, code only", "concurrency": 8, "kind": "code", "tokens": 4096, "agg_tps": 766.2979584516149, "per_stream_tps": 113.44714586635811}
+{"label": "tuned image, compose as shipped, prose only", "concurrency": 8, "kind": "prose", "tokens": 4096, "agg_tps": 702.238686288624, "per_stream_tps": 92.7134151376154}

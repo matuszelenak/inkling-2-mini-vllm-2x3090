@@ -1,0 +1,8 @@
+label,width,height,ok,correct,prompt_n,gen_n,wall_s,gpu0_used_mib,gpu1_used_mib,error
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,64,64,1,1,,,0.4,20198,20190,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,512,512,1,1,,,0.3,20226,20218,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,1024,768,1,1,,,0.4,20340,20332,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,768,1024,1,1,,,0.4,20340,20332,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,2048,2048,1,1,,,1.0,20880,20872,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,4096,1024,1,1,,,1.0,20880,20872,
+vllm g7cb5dae22+sm86 TP2 dspark7-prob,4096,4096,0,0,,,0.1,20880,20872,"HTTP 400: {""error"":{""message"":""The decoder prompt contains a(n) image item with 10609 embedding tokens, which exceeds the pre-allocated encoder cache size 2704. Please re"

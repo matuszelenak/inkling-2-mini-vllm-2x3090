@@ -1,0 +1,6 @@
+# Only the two scripts and the tuning patch go into the build context.
+*
+!install_sm86_kernels.py
+!apply_sm86_patch.py
+!patches
+!patches/sm86-tune.diff

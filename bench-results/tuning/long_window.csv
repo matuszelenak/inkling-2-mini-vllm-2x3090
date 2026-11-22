@@ -1,0 +1,5 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"text only, no drafter, 294,912 window",deep 200000,0.0,200172,46.11,4341.2,162,92.29,5,5,stop,47.9
+"text only, no drafter, 294,912 window",deep 280000,0.0,280173,75.54,3709.1,156,81.01,5,5,stop,77.5
+"text only, drafter, 262,144 window, util 0.95",deep 250000,0.0,250173,63.76,3923.5,162,257.89,5,5,stop,64.4
+"text only, no drafter, 368,640 window",deep 360000,0.0,360174,108.97,3305.2,385,72.07,5,5,stop,114.3

@@ -1,0 +1,8 @@
+label,width,height,ok,correct,prompt_n,gen_n,wall_s,gpu0_used_mib,gpu1_used_mib,error
+"tuned image, compose as shipped",64,64,1,1,72,83,0.3,23190,23182,
+"tuned image, compose as shipped",512,512,1,1,237,73,0.3,23196,23188,
+"tuned image, compose as shipped",1024,768,1,1,588,73,0.4,23196,23188,
+"tuned image, compose as shipped",768,1024,1,1,588,73,0.3,23196,23188,
+"tuned image, compose as shipped",2048,2048,1,1,2772,73,0.9,23196,23188,
+"tuned image, compose as shipped",4096,1024,1,1,2746,87,1.0,23196,23188,
+"tuned image, compose as shipped",4096,4096,0,0,,,0.1,23196,23188,"HTTP 400: {""error"":{""message"":""The decoder prompt contains a(n) image item with 10609 embedding tokens, which exceeds the pre-allocated encoder cache size 2704. Please re"
