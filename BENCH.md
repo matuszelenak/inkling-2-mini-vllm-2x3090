@@ -381,7 +381,7 @@ After the 120K fill and the image sweep: 3.3 GiB free per card.
 
 ## Unit tests
 
-Upstream `tests/models/inkling2` at `fc144315` (the head of vllm-project/vllm#69028 at the time), gates widened with `tools/widen_test_gates.py`, on one RTX 3090. Recipe: [README](README.md#upstream-unit-tests).
+Upstream `tests/models/inkling2` at `fc144315` (the head of vllm-project/vllm#69028 at the time), gates widened with `tools/widen_test_gates.py`, on one RTX 3090. Recipe: [NOTES.md](NOTES.md#upstream-unit-tests).
 
 | File | Passed | Failed | Skipped | Failures on the Ampere path |
 |---|---|---|---|---|

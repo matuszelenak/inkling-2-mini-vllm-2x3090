@@ -3,13 +3,13 @@
 #
 # NOT SUPPORTED UPSTREAM: vLLM targets Blackwell, Hopper and DGX Spark for
 # this model. This runs the official image with its Ampere blockers patched
-# out (see Dockerfile and README): Hopper code path, BF16 activations against
+# out (see Dockerfile and NOTES.md): Hopper code path, BF16 activations against
 # the native NVFP4 / MXFP8 expert weights, TP2 + EP2.
 #
 # ASSUMES AN NVLINK BRIDGE between the two GPUs: custom all-reduce is on
 # (no --disable-custom-all-reduce, no NCCL_P2P_DISABLE, no
 # expandable_segments). The model does 96 all-reduces per token. Two cards
-# without a bridge have not been tested with this file (README, "Other
+# without a bridge have not been tested with this file (NOTES.md, "Other
 # setups").
 #
 # Measured 2026-11-21 with the tuning patch (BENCH.md): 143 tok/s decode
@@ -40,7 +40,7 @@ services:
       # The KV pool at these settings is 225,883 tokens. 196,608 lets one
       # request use most of it; filled to 120K in testing. Native is
       # 1,048,576. Text only, the pool is larger: 262,144 with the drafter
-      # and 368,640 without it were booted and filled (README, "Long
+      # and 368,640 without it were booted and filled (NOTES.md, "Long
       # windows").
       - --max-model-len
       - "196608"
