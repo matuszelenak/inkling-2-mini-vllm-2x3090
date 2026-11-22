@@ -1,0 +1,5 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"candidate image tune3, compose as shipped",code greedy,0.0,82,0.05,1508.4,512,242.12,,,length,2.2
+"candidate image tune3, compose as shipped",code temp1,1.0,86,0.05,1634.8,512,215.52,,,length,2.4
+"candidate image tune3, compose as shipped",prose greedy,0.0,69,0.04,1644.2,512,209.19,,,length,2.5
+"candidate image tune3, compose as shipped",json tools greedy,0.0,111,0.05,2075.6,320,302.25,,,stop,1.1

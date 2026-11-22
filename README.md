@@ -7,13 +7,13 @@ vLLM does not run [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkli
 | Model | `thinkingmachines/Inkling-2-Mini`, the original checkpoint (experts in NVFP4 / MXFP8, 18.2 GiB), with its bundled DSpark drafter and vision tower |
 | Engine | `vllm/vllm-openai:inkling-2-mini` by digest (vLLM `0.1.dev25855+g7cb5dae22`): compiled kernels swapped, five source patches, one tuning patch |
 | Tested on | 2× RTX 3090 (sm_86, 24 GB) at 300 W, NVLink, tensor parallel 2 |
-| Window | 196,608 tokens (KV pool 225,883); filled to 120K. Text only: 262,144 with the drafter, 368,640 without ([long windows](NOTES.md#long-windows)) |
-| Decode, one request | 143 tok/s without the drafter; with it 170 (prose), 200 (chat), 223 (code), 306 (JSON tool calls), medians of three |
-| Decode at depth | 131 tok/s at 32K, 107 at 120K, without the drafter |
+| Window | 196,608 tokens (KV pool 223,030); filled to 190K. Text only: 262,144 with the drafter, 368,640 without ([long windows](NOTES.md#long-windows)) |
+| Decode, one request | 143 tok/s without the drafter; with it 182 (prose), 214 (chat), 240 (code), 328 (JSON tool calls), medians of three |
+| Decode at depth | 131 tok/s at 32K, 107 at 120K, without the drafter; with it, 143 at 110K and 130 at 190K on plain prose |
 | Prefill | 7,030 tok/s at 8K, 6,700 at 24K, 5,170 at 120K (23 s to first token) |
-| Several requests | 509 tok/s aggregate at 4, 747 at 8 |
+| Several requests | 534 tok/s aggregate at 4, 778 at 8 |
 | Images | up to about 2080×2080 px |
-| Checks | GSM8K-200 98.0%; retrieval 5 / 5 to 120K; two cards match one card token for token within the model's own decode/prefill noise |
+| Checks | GSM8K-200 97.0% to 98.0% over five runs; retrieval 5 / 5 to 120K; two cards match one card token for token within the model's own decode/prefill noise |
 | llama.cpp on the same cards | 50 tok/s decode, 564 tok/s prefill at 24K |
 
 All numbers: [BENCH.md](BENCH.md). How the port works, the tuning, and how it compares with the other Ampere routes: [NOTES.md](NOTES.md).

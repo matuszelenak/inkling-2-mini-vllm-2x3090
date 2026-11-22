@@ -9,6 +9,10 @@ What the tuning in `patches/sm86-tune.diff` was measured with. Results: [BENCH.m
 | `bench_concurrency.py` | against a server | aggregate output tok/s at 1 to N concurrent requests |
 | `published_protocols.py` | against a server | the benchmark protocols two other projects publish, re-implemented (same prompts, parameters and metrics), to read this server against their tables |
 | `more_protocols.py` | against a server | the same for two more projects (lulakien's prefill and decode protocol, ingine's prompts) |
+| `sampling_check.py` | against two servers | whether sampling follows the same distribution on both: seeded short continuations at temperature 1, compared position by position |
+| `collect_outputs.py`, `build_draft_vocab.py` | against a server | model output across kinds of task, and the token ranking for the reduced draft vocabulary built from it and from text you supply |
+| `lists_bench.py` | against a server | very predictable output (numbered lists) at 1 and 8 requests |
+| `depth_accept.py` | against a server | prefill, decode and draft acceptance by context depth, same task at every depth |
 | `ksum.py` | on profiler traces | GPU kernel time per decode step or prefill chunk, by kernel |
 | `mb_gemv.py` | inside the image, one free GPU | every small-matmul tile config that fits the card, per weight shape, against cuBLAS |
 | `mb_humming.py` | inside the image, one free GPU | expert-GEMM kernel configs at the real layer shape, against the library's heuristic |
@@ -28,7 +32,7 @@ tools/tune/bench_concurrency.py "label" /tmp/conc.jsonl --levels 1 2 4 8 16
 ```
 
 To A/B one tuning, restart the server with `INKLING_SM86_TUNE` set to `none`, `all`, or a comma list of
-`gemv, fold, seg3, ctrl, humming, humming_big, align, far, router, tiles, adaptive`.
+`gemv, fold, seg3, ctrl, humming, humming_big, align, far, router, tiles, adaptive, dvocab`.
 
 ## Microbenchmarks
 
@@ -36,7 +40,7 @@ They time kernels inside CUDA graphs, cycling through copies of the weights so e
 in the model. Stop the server first: they need one card to themselves.
 
 ```bash
-IMG=inkling-2-mini-vllm-2x3090:g7cb5dae22-tune1
+IMG=inkling-2-mini-vllm-2x3090:g7cb5dae22-tune2
 run() { docker run --rm --gpus '"device=0"' --ipc host -v $PWD/tools/tune:/t "$@"; }
 run --entrypoint python3 $IMG /t/mb_gemv.py
 run -e INKLING_SM86_TUNE=none --entrypoint python3 $IMG /t/mb_humming.py 1 8 16      # tokens per step

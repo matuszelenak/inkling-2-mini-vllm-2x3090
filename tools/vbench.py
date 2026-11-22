@@ -79,10 +79,13 @@ def stream(url, body):
 
 def corpus(root: pathlib.Path) -> str:
     """Varied real text (source and docs under `root`): repetitive filler
-    would let the drafter coast and inflate acceptance."""
+    would let the drafter coast and inflate acceptance. Hidden files and
+    directories are skipped: files are read in path order, and a dot
+    directory of tool output sorts first and would become the whole prompt."""
     parts = []
     for f in sorted(root.rglob("*")):
-        if f.suffix not in CORPUS_SUFFIXES or CORPUS_SKIP & set(f.relative_to(root).parts) or not f.is_file():
+        rel = f.relative_to(root).parts
+        if f.suffix not in CORPUS_SUFFIXES or CORPUS_SKIP & set(rel) or any(p.startswith(".") for p in rel) or not f.is_file():
             continue
         try:
             parts.append(f"===== {f.relative_to(root)} =====\n{f.read_text(errors='ignore')}")

@@ -6,7 +6,8 @@ draft-length range, the long-prompt attention loop and the one-kernel expert ali
 snailbrainx/inkling-2-mini-sm80 (Apache-2.0, https://github.com/snailbrainx/inkling-2-mini-sm80).
 Added here: the shared-memory fit for sm_86, the expert-GEMM kernel configs, router and attention tiles measured
 on sm_86, the draft length chosen per step from recent acceptance (scheduler hook +
-spec_decode/dynamic/adaptive_k.py), and the switches.
+spec_decode/dynamic/adaptive_k.py), the reduced draft vocabulary (nvidia/dspark.py, speculator.py; its
+ranking is patches/draft_vocab_rank.json), and the switches.
 
 diff -ruN a/vllm/models/inkling2/nvidia/attention.py b/vllm/models/inkling2/nvidia/attention.py
 --- a/vllm/models/inkling2/nvidia/attention.py
@@ -54,10 +55,43 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
  from .ops.linear import linear
  
  
-@@ -382,6 +384,11 @@
+@@ -343,6 +345,19 @@
+         self.fold_weight: torch.Tensor | None = None
+         self.fold_bias: torch.Tensor | None = None
+         self.rnn_bias: torch.Tensor | None = None
++        # Reduced draft vocabulary (INKLING_SM86_TUNE: dvocab): the fold for the kept rows only.
++        self.fold_weight_red: torch.Tensor | None = None
++        self.fold_bias_red: torch.Tensor | None = None
++
++    @torch.no_grad()
++    def reduce(self, rows: torch.Tensor) -> None:
++        """Copy the fold of the kept (TP-local) rows; refilled in place like `fold`."""
++        assert self.fold_weight is not None and self.fold_bias is not None
++        if self.fold_weight_red is None or self.fold_bias_red is None:
++            self.fold_weight_red = self.fold_weight.new_empty((rows.numel(), self.markov_rank))
++            self.fold_bias_red = self.fold_bias.new_empty((rows.numel(),))
++        self.fold_weight_red.copy_(self.fold_weight[rows])
++        self.fold_bias_red.copy_(self.fold_bias[rows])
+ 
+     @torch.no_grad()
+     def fold(self, lm_head_weight: torch.Tensor) -> None:
+@@ -374,14 +389,22 @@
+         return out.view(hidden.shape[0], num_reqs, -1)
+ 
+     def step(
+-        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor
++        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor, reduced: bool = False
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+-        """One recurrence step; returns the new state and the TP-local bias."""
++        """One recurrence step; returns the new state and the TP-local bias (over the kept rows if `reduced`)."""
+         assert self.fold_weight is not None and self.fold_bias is not None
+         inputs = torch.cat([state, self.markov_w1(prev_tokens)], dim=-1)
          weight = self.rnn_proj.weight[:, : 2 * self.markov_rank]
          raw = torch.addmm(context, inputs, weight.T, out_dtype=torch.float32)
          state, latent = markov_gate(raw, state)
++        if reduced:
++            assert self.fold_weight_red is not None and self.fold_bias_red is not None
++            return state, torch.addmm(self.fold_bias_red, latent, self.fold_weight_red.T)
 +        # sm_80 (Ampere): the (vocab, r) fold through the low-M gemv, ~15% faster than cuBLAS's kernel here.
 +        if tune("fold") and current_platform.is_device_capability_family(80) and use_sm12x_bf16_gemv(
 +            latent, self.fold_weight, self.fold_bias
@@ -66,7 +100,7 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
          return state, torch.addmm(self.fold_bias, latent, self.fold_weight.T)
  
  
-@@ -465,11 +472,15 @@
+@@ -465,11 +488,15 @@
          config = vllm_config.speculative_config.draft_model_config.hf_config
          assert isinstance(config, Inkling2DSparkConfig)
          num_spec = vllm_config.speculative_config.num_speculative_tokens
@@ -84,6 +118,93 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
          if vllm_config.model_config.max_model_len > config.max_position_embeddings:
              raise ValueError(
                  "Inkling2 DSpark drafts up to max_position_embeddings="
+@@ -503,6 +530,7 @@
+         assert head.rnn_bias is not None
+         head.fold(self.lm_head.weight)
+         head.rnn_bias.copy_(head.rnn_proj.bias)
++        self._refresh_draft_vocab()
+         self.model.fuse_alpha.copy_(
+             torch.softmax(self.model.fuse_weight.float(), dim=-1)
+         )
+@@ -510,6 +538,65 @@
+     def get_draft_kv_cache_layer_names(self) -> list[str]:
+         return [layer.self_attn.attn.layer_name for layer in self.model.layers]
+ 
++    # ---- reduced draft vocabulary (Ampere tuning, INKLING_SM86_TUNE: dvocab) ----------------------------------
++    # The drafter's base logits read the whole TP-local LM head (100,512 x 2,304 bf16, about 0.54 ms per step on
++    # an RTX 3090), each draft position projects its Markov latent onto every row and all-gathers full-vocabulary
++    # logits: about 1.2 ms per step in all. Drafting over the K most likely ids of each shard reads K rows instead.
++    # The ranking (draft_vocab_rank.json beside this package's __init__) is built from English text, code and
++    # model output; INKLING_SM86_DVOCAB=off switches it off, or names another ranking file, and
++    # INKLING_SM86_DVOCAB_K sets K (default 24576, which covers about 99% of that kind of text). Draft and verification stay consistent: the kept logits are
++    # scattered into a full-vocabulary row that is -inf elsewhere, so the draft is sampled from, and verified
++    # against, the same renormalised distribution. A token outside the set can never be drafted; the target
++    # still produces it.
++    draft_rows: torch.Tensor | None = None            # kept TP-local rows of this rank
++    draft_scatter_index: torch.Tensor | None = None   # global ids of the gathered reduced logits, rank by rank
++    lm_head_red: torch.Tensor | None = None
++
++    @torch.no_grad()
++    def _refresh_draft_vocab(self) -> None:
++        import json
++        import os
++
++        path = os.environ.get("INKLING_SM86_DVOCAB")
++        if path is None and tune("dvocab"):
++            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "draft_vocab_rank.json")
++        if not path or path == "off" or not os.path.exists(path):
++            return
++        assert self.lm_head is not None
++        weight = self.lm_head.weight
++        shard, tp = weight.shape[0], get_tensor_model_parallel_world_size()
++        keep = int(os.environ.get("INKLING_SM86_DVOCAB_K", "24576"))
++        ranking = [int(t) for t in json.load(open(path))]
++        limit = self.config.vocab_size
++        per_shard: list[list[int]] = []
++        for s in range(tp):
++            lo, hi = s * shard, min((s + 1) * shard, limit)
++            ids = [t for t in ranking if lo <= t < hi][:keep]
++            have = set(ids)
++            fill = (t for t in range(lo, hi) if t not in have)
++            while len(ids) < keep:
++                ids.append(next(fill))
++            per_shard.append(sorted(ids))
++        mine = per_shard[get_tp_group().rank_in_group]
++        rows = torch.tensor([t % shard for t in mine], dtype=torch.int64, device=weight.device)
++        if self.lm_head_red is None:
++            self.draft_rows = rows
++            self.draft_scatter_index = torch.tensor(
++                [t for ids in per_shard for t in ids], dtype=torch.int64, device=weight.device
++            )
++            self.lm_head_red = weight.new_empty((keep, weight.shape[1]))
++        self.lm_head_red.copy_(weight[rows])
++        self.model.markov_head.reduce(rows)
++
++    def compute_base_logits_reduced(self, hidden_states: torch.Tensor) -> torch.Tensor:
++        assert self.lm_head_red is not None
++        return linear(hidden_states, self.lm_head_red)
++
++    def markov_logits_reduced(self, base_logits: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
++        """Softcapped logits over the kept ids of every rank, in `draft_scatter_index` order."""
++        logits = add_softcap(base_logits, bias, self.config.final_logit_softcapping)
++        return tensor_model_parallel_all_gather(logits)
++
+     def combine_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         # Each draft layer mixes the raw target features itself.
+         return hidden_states
+@@ -547,10 +634,10 @@
+         return linear(hidden_states, self.lm_head.weight)
+ 
+     def markov_step(
+-        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor
++        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor, reduced: bool = False
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+         """Advance the recurrent head; return the state and TP-local bias."""
+-        return self.model.markov_head.step(state, prev_tokens, context)
++        return self.model.markov_head.step(state, prev_tokens, context, reduced)
+ 
+     def markov_logits(
+         self, base_logits: torch.Tensor, bias: torch.Tensor
 diff -ruN a/vllm/models/inkling2/nvidia/loop.py b/vllm/models/inkling2/nvidia/loop.py
 --- a/vllm/models/inkling2/nvidia/loop.py
 +++ b/vllm/models/inkling2/nvidia/loop.py
@@ -612,6 +733,54 @@ diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_sm90.py b/vllm/models/inkling2/n
              self.configs[name] = config
              self.tensors[name] = tensors
              self.tunings[name] = tuning
+diff -ruN a/vllm/models/inkling2/speculator.py b/vllm/models/inkling2/speculator.py
+--- a/vllm/models/inkling2/speculator.py
++++ b/vllm/models/inkling2/speculator.py
+@@ -44,6 +44,16 @@
+     ) -> nn.Module:
+         model = load_dspark_model(target_model, self.vllm_config)
+         model.attach_target(target_model.get_language_model())
++        # Reduced draft vocabulary (INKLING_SM86_TUNE: dvocab, nvidia/dspark.py): `_sample_logits` scatters the kept logits
++        # into this full-vocabulary row before sampling and caching them for verification.
++        if self.use_draft_logits and model.draft_scatter_index is not None:
++            self._d2t_scatter_index = model.draft_scatter_index
++            self._draft_scatter_buf = torch.full(
++                (self.max_num_reqs, self.vocab_size),
++                float("-inf"),
++                dtype=self.draft_logits_spec(self.vllm_config)[0],
++                device=self.device,
++            )
+         return model
+ 
+     def prepare_context_anchor(
+@@ -61,17 +71,24 @@
+         n_spec = self.num_speculative_steps
+         num_sample = num_reqs * n_spec
+         hidden = head_hidden[self.sample_indices[:num_sample]]
+-        base_logits = self.model.compute_base_logits(hidden).view(num_reqs, n_spec, -1)
++        reduced = self._d2t_scatter_index is not None and self.draft_logits is not None
++        base_logits = (
++            self.model.compute_base_logits_reduced(hidden) if reduced else self.model.compute_base_logits(hidden)
++        ).view(num_reqs, n_spec, -1)
+         context = self.model.model.markov_head.context(hidden, self.f_rnn[:num_reqs])
+         idx_map = self.sample_idx_mapping[:num_sample].view(num_reqs, n_spec)
+         sample_pos = self.sample_pos[:num_sample].view(num_reqs, n_spec)
+         state = hidden.new_zeros(num_reqs, self.model.config.markov_rank)
+         prev = self.input_buffers.input_ids[self._anchor_idx[:num_reqs]]
+         for i in range(n_spec):
+-            state, bias = self.model.markov_step(state, prev, context[i])
++            state, bias = self.model.markov_step(state, prev, context[i], reduced)
+             if self.draft_logits is None:
+                 prev = self.model.markov_argmax(base_logits[:, i], bias)
+             else:
+-                logits = self.model.markov_logits(base_logits[:, i], bias)
++                logits = (
++                    self.model.markov_logits_reduced(base_logits[:, i], bias)
++                    if reduced
++                    else self.model.markov_logits(base_logits[:, i], bias)
++                )
+                 prev = self._sample_logits(logits, idx_map[:, i], sample_pos[:, i], i)
+             self.draft_tokens[:num_reqs, i] = prev
 diff -ruN a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
 --- a/vllm/v1/core/sched/scheduler.py
 +++ b/vllm/v1/core/sched/scheduler.py

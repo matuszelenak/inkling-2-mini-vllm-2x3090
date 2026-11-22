@@ -4,9 +4,92 @@
 
 llama.cpp columns: the same cards, prompts and day. llama.cpp at `690b87d` (ggml-org/llama.cpp#32694 + #32704) plus one local patch for loop-slot placement, Unsloth's `UD-Q8_K_XL` GGUF, layer split across both cards, f16 KV, 131,072 window, no drafter. That config and its CSVs are not part of this repo: `bench-results/` holds the vLLM rows only.
 
+## Reduced draft vocabulary
+
+2026-11-22. The image this repo builds now (`inkling-2-mini-vllm-2x3090:g7cb5dae22-tune2`), booted from `docker-compose.yml` as shipped, against the previous build (`-tune1`, everything in [Tuning](#tuning) below) measured the same morning. Data: `bench-results/tuning/reduced-draft-vocab/`. Only the drafter path changes: decode without the drafter and prefill are the previous build's.
+
+Where the time was (torch profiler, rank 0, a step with 7 drafts): two passes over the TP-local output head per step at 537 µs each, one for the model and one for the drafter; 7 projections of the drafter's Markov latent onto every vocabulary row at 64 µs each; 8 all-gathers of full-vocabulary logits at 32 µs each, 7 of them the drafter's. About 1.2 ms of every step with the drafter was vocabulary-sized work for the drafter. It now scores the 24,576 highest-ranked token ids of each vocabulary half.
+
+### Decode, one request
+
+`tools/tune/bench_step.py`, 512 tokens out, medians of three (greedy) or four (temperature 0.6) runs. Previous build: `steps_previous_build_same_day.jsonl`. This build: `steps.jsonl`.
+
+| Workload | Previous tok/s | This build | Previous ms per step | This build | Previous tokens per step | This build |
+|---|---|---|---|---|---|---|
+| code, greedy | 227.5 | 239.7 | 12.05 | 11.35 | 2.69 | 2.67 |
+| prose, greedy | 172.4 | 182.1 | 11.43 | 10.71 | 2.01 | 1.99 |
+| JSON, greedy | 310.7 | 327.6 | 12.55 | 11.90 | 3.85 | 3.85 |
+| chat, greedy | 203.2 | 214.0 | 11.82 | 11.10 | 2.41 | 2.40 |
+| code, temperature 1 | 227.4 | 231.9 | 12.14 | 11.37 | 2.74 | 2.68 |
+| code, temperature 0.6 | 245.6 | 254.7 | 12.34 | 11.62 | 3.17 | 3.13 |
+| prose, temperature 0.6 | 176.6 | 191.8 | 11.53 | 10.78 | 2.03 | 2.07 |
+| JSON, temperature 0.6 | 292.5 | 321.4 | 12.65 | 12.07 | 3.79 | 3.90 |
+| chat, temperature 0.6 | 213.4 | 219.4 | 12.21 | 11.27 | 2.63 | 2.48 |
+
+Greedy text is the same on both builds, so those rows compare like with like: the step is 0.65 to 0.72 ms shorter and tokens per step are unchanged. Acceptance by draft position on greedy code: 0.66 / 0.43 / 0.27 / 0.16 on both.
+
+### Size of the set, and what the ranking has to cover
+
+First-draft acceptance fell in proportion to how much of the output the set could express. With a first ranking built from a novel and a config tree only, and 8,192 ids per half, the step was 1.1 to 1.3 ms shorter but chat's first draft was accepted 0.60 of the time against 0.69: that ranking covered 87% of held-out chat output. The shipped ranking (49,667 ids; `tools/tune/build_draft_vocab.py`) covers, per vocabulary half:
+
+| Held-out text | 8,192 ids | 16,384 | 24,576 |
+|---|---|---|---|
+| Model output: code / chat / prose / JSON | 98.0% / 91.6% / 92.7% / 96.3% | 99.3% / 97.1% / 97.7% / 98.2% | 99.5% / 98.4% / 99.4% / 99.5% |
+| C source, a file not in the ranking | 97.2% | 99.0% | 99.4% |
+| Python source, a part not in the ranking | 97.9% | 99.5% | 99.7% |
+| wikitext-2 test | 90.7% | 97.6% | 99.2% |
+
+The model-output samples are small (177 to 9,248 tokens). At 16,384 ids the step is 0.05 ms shorter than at 24,576 and greedy tokens per step are the same; 24,576 is shipped for the coverage. The ranking is English text and code.
+
+### Other rows
+
+| | Previous build | This build |
+|---|---|---|
+| Aggregate at 1 / 2 / 4 / 8 requests (`concurrency.jsonl`) | 255 / 340 / 516 / 735 that morning; 253 / 336 / 509 / 747 the night before | 270 / 357 / 534 / 778 |
+| GSM8K-200 at concurrency 4 | 194 / 200, 2 at the token cap, 625 tok/s that morning; 196 / 200 three times before | 194 / 200, 2 at the token cap, 649 tok/s |
+| War and Peace, decode with the drafter at 2K / 60K / 110K / 190K (`depth_accept_warpeace.jsonl`) | 194.5 / 153.4 / 130.9 / 122.8 | 201.6 / 160.2 / 143.2 / 130.4 |
+| The same, tokens per step | 2.34 / 2.00 / 1.81 / 1.94 | 2.29 / 1.92 / 1.88 / 1.96 |
+| The same, prefill tok/s | 6,570 / 6,059 / 5,283 / 4,391 | 6,567 / 6,016 / 5,264 / 4,384 |
+| KV pool | 225,883 tokens | 223,030 |
+| Numbered lists, greedy, reasoning effort none: 1 request / 8 at once (`lists.json`, `tools/tune/lists_bench.py`) | not run | 476–486 / 1,481 tok/s; at low effort 510 / 1,420 |
+| Memory in use per card after the whole suite | 22.7 GiB | 22.9 GiB |
+
+The other projects' protocols on this build (`published_protocols-drafter.json`, `more_protocols-drafter.json`; "theirs" as published on 2026-11-22):
+
+| Protocol | Row | Theirs | Previous build | This build |
+|---|---|---|---|---|
+| agent2x0r | Decode with the drafter at 1K / 4K / 16K / 32K / 60K | 172 / 166 / 178 / 178 / 170 | 216 / 228 / 216 / 211 / 200 | 240 / 234 / 248 / 244 / 215 |
+| agent2x0r | Code / math / prose / JSON | 202 / 178 / 136 / 210 | 229 / 225 / 180 / 251 | 262 / 231 / 195 / 262 |
+| agent2x0r | Aggregate at 1 / 2 / 4 / 8 users | 191 / 278 / 353 / 383 | 260 / 322 / 422 / 482 | 268 / 369 / 423 / 494 |
+| HyperInkling | Chat / code / structured / prose, one run each | about 150 / 220 / 295 / 155 | 146 / 268 / 327 / 144 | 159 / 270 / 340 / 171 |
+| lulakien | Code / explanation / story | 313 / 166 / 126 | 340 / 190 / 153 | 355 / 197 / 165 |
+| lulakien | Aggregate at 2 / 4 / 8 streams | 260 / 339 / 445 | 324 / 397 / 674 | 336 / 420 / 687 |
+| lulakien | Prefill at 2,000 / 16,000 / 64,000 tokens | 7,480 / 7,140 / 6,280 | 7,254–7,405 / 6,909–7,031 / 5,998–6,094 over three sessions | 7,190 / 6,844 / 5,950 after 20 minutes of load |
+| ingine | Chat / code prompt, default reasoning effort | 235–239 / 219–224 | 232–235 / 261–263 | 249–255 / 278–280 |
+
+### Checks
+
+| Check | Result |
+|---|---|
+| Correctness gate (`tools/tune/gate.py`) | pass, with the previous build's figures: 98.37% against the one-card reference, decode against prefill 99.02% over 1,536 tokens and 99.16% over 6,912 tokens at 12K depth |
+| Sampling (`tools/tune/sampling_check.py`: 6,000 seeded 5-token continuations of four prompts at temperature 1, on both builds; `sampling_*.json`) | at every position and prompt the total-variation distance between the builds (0.003 to 0.18) is below the distance between two halves of the previous build's own samples (0.085 to 0.56). Tokens outside the reduced set appear as often on this build as on the previous one: 12.4% against 12.3%, 9.9% against 10.3%, 8.1% against 7.6% and 6.3% against 6.9% at the four draft-verified positions where they are most common |
+| Images 64×64 to 4096×1024; 4096×4096 | correct; rejected with HTTP 400 as before |
+| Tool call through the `inkling` parser | name and JSON arguments correct |
+| Server errors over the suite | 0 |
+
+The built image was compared file by file with the tested tree (42 Python files and the ranking, by sha256). Upstream's unit tests were not re-run.
+
+### Tried on the way, not adopted
+
+| Change | Result |
+|---|---|
+| The drafter producing only as many tokens as the scheduler will verify (a shorter block per step, its own CUDA graphs) | step 0.5 to 0.8 ms shorter at 2 to 4 drafts; prose and chat +2% to +4%, greedy JSON −7% (first draft accepted 0.80 against 0.85: short blocks draft predictable text worse), 2 requests −8%, GSM8K-200 193 / 200. Correct, not a net gain |
+| Draft-length policies that react to the previous step (one estimate per previous outcome; a 2 / 4 / 7 ladder), replayed on a 12,000-step trace | within 1% of the running-estimate policy at any reaction delay. After a miss the first draft is accepted 0.58 of the time, after three or more accepted 0.76: too little to exploit |
+| vLLM's adaptive verification (`enable_adaptive_verification`: verify length from draft confidence) | does not start: `Inkling2AttentionBackend` and `InklingSconvBackend` replay only decode batches of equal length. The same trace puts a perfect per-step verify length at +16% to +19% |
+
 ## Tuning
 
-2026-11-21, evening. Same cards and settings as below, with `patches/sm86-tune.diff` (the image `inkling-2-mini-vllm-2x3090:g7cb5dae22-tune1`, booted from `docker-compose.yml` as shipped unless a row says otherwise: drafter on, vision loaded, `--max-num-seqs 8`). "Untuned" is the port as measured earlier the same day; `INKLING_SM86_TUNE=none` reproduces it. "Tuned" columns are the final image. The change-by-change tables were measured as each change went in, so their absolute figures predate the last three rows of the step table where noted. Data: `bench-results/tuning/`; the same suite on the build before those three rows is in `tuning/before-router-and-tiles/`. Tools: `tools/tune/`.
+2026-11-21, evening. The build before the reduced draft vocabulary (image tag `-tune1`). Same cards and settings as below, with `patches/sm86-tune.diff` (the image `inkling-2-mini-vllm-2x3090:g7cb5dae22-tune1`, booted from `docker-compose.yml` as shipped unless a row says otherwise: drafter on, vision loaded, `--max-num-seqs 8`). "Untuned" is the port as measured earlier the same day; `INKLING_SM86_TUNE=none` reproduces it. "Tuned" columns are the final image. The change-by-change tables were measured as each change went in, so their absolute figures predate the last three rows of the step table where noted. Data: `bench-results/tuning/`; the same suite on the build before those three rows is in `tuning/before-router-and-tiles/`. Tools: `tools/tune/`.
 
 ### Decode, one request
 
@@ -43,6 +126,35 @@ Five planted facts per prompt, all found at every depth in both builds. Decode i
 | 120,176 | 4,753 | 5,170 | 94.3 | 106.9 | 23.3 s |
 
 Tuned prefill is as shipped (drafter loaded, `--max-num-seqs 8`). With the drafter off the same image gave 7,078 / 6,747 / 6,621 / 6,310 / 6,047 / 5,212. Prefill repeats to about ±0.5% between runs and boots; both cards draw their 300 W cap throughout.
+
+### Depth on plain prose, with draft acceptance
+
+`tools/tune/depth_accept.py`. Final image as shipped (images and drafter loaded, draft-length policy on), 2026-11-22. The prompt is the first N tokens of one text with a unique first line, and the task is the same at every depth ("about 400 words explaining what the material above covers"). Temperature 0.6, low reasoning effort, 512 tokens out. Acceptance is per step, from the server's draft counters.
+
+War and Peace (Project Gutenberg; no repeated lines), three runs per depth, means (`tuning/depth_accept_warpeace.jsonl`):
+
+| Prompt tokens | Prefill tok/s | To first token | Decode tok/s, drafter on | ms per step | Tokens per step | Accepted at draft position 1 / 2 / 3 |
+|---|---|---|---|---|---|---|
+| 2,061 | 6,570 | 0.31 s | 194.5 | 12.0 | 2.34 | 0.65 / 0.37 / 0.21 |
+| 60,062 | 6,059 | 9.9 s | 153.4 | 13.0 | 2.00 | 0.55 / 0.27 / 0.14 |
+| 110,062 | 5,283 | 20.8 s | 130.9 | 13.8 | 1.81 | 0.51 / 0.22 / 0.07 |
+| 190,061 | 4,391 | 43.3 s | 122.8 | 15.8 | 1.94 | 0.52 / 0.26 / 0.13 |
+
+The same run on the page-snapshot YAML that every other depth row in this file used (see [Depth corpus](#reproduce)), two runs per depth, means (`tuning/depth_accept.jsonl`):
+
+| Prompt tokens | Prefill tok/s | To first token | Decode tok/s, drafter on | ms per step | Tokens per step | Accepted at draft position 1 / 2 / 3 |
+|---|---|---|---|---|---|---|
+| 2,061 | 6,815 | 0.30 s | 206.5 | 12.3 | 2.56 | 0.67 / 0.42 / 0.24 |
+| 60,060 | 6,208 | 9.7 s | 169.7 | 13.5 | 2.29 | 0.59 / 0.37 / 0.20 |
+| 110,062 | 5,422 | 20.3 s | 152.0 | 14.5 | 2.21 | 0.58 / 0.35 / 0.20 |
+| 190,061 | 4,470 | 42.5 s | 132.2 | 15.8 | 2.09 | 0.59 / 0.34 / 0.14 |
+
+- **Prefill is 2% to 3% lower on prose** than on the YAML at 60K to 190K (4% at 2K, where one run is noisy). The depth rows elsewhere in this file were measured on the YAML and are high by about that much for natural text.
+- **With the drafter, decode at depth is 7% to 14% lower on prose**, because fewer drafts are accepted: 1.8 to 2.0 tokens per step against 2.1 to 2.3.
+- **Acceptance falls from short context to depth on prose**: the first draft is accepted 0.65 of the time at 2K and 0.51 to 0.55 from 60K to 190K. The output is not identical across depths (the model is describing more material), so this is depth and task together.
+- The step itself grows from 12.0 ms at 2K to 15.8 ms at 190K on either text.
+- The other dual-3090 project's context-scaling protocol, with its own fixed task, gave 2.7 to 3.0 tokens per step from 1K to 60K with no trend (`tuning/published_protocols-drafter.json`, `acc`).
+- These are the deepest fills of the shipped config: 190K of a 196,608 window, five times, no server errors, 20.2 GiB in use per card afterwards. The first 2K run on the YAML (765 tok/s prefill, kernel compilation after a restart) is left out.
 
 ### Long windows
 
@@ -202,7 +314,7 @@ lulakien/inkling2-mini-3090-recipe: 2× RTX 3090 over PCIe at 280 W, original ex
 | Explanation | 166 | 189.9 |
 | Story | 126 | 153.4 |
 | Aggregate at 2 / 4 / 8 streams, the three prompts in rotation | 260 / 339 / 445 | 324.1 / 397.4 / 673.7 |
-| Prefill at 2,000 / 16,000 / 64,000 tokens | 7,480 / 7,140 / 6,280 | 7,405 / 7,031 / 6,094 |
+| Prefill at 2,000 / 16,000 / 64,000 tokens | 7,480 / 7,140 / 6,280 | 7,405 / 7,031 / 6,094; later sessions 7,355 / 6,950 / 6,031, 7,254 / 6,909 / 5,998 and, after 20 minutes of load, 7,182 / 6,841 / 5,947 |
 
 Greedy and identical across runs: every repeat generated the same number of tokens. How it combines prompts for its stream rows is not published; the rotation is this repo's choice.
 
@@ -408,5 +520,5 @@ tools/image_sweep.py "<label>"
 tools/tf_probe.py compare http://localhost:8000 bench-results/tf_reference_tp1.json
 ```
 
-- **Depth corpus:** the published depth rows were built from the source and docs of a private config repo. `--corpus-dir` takes any tree of source and docs; the planted facts and the question are the same, the filler text is yours.
+- **Depth corpus:** `--corpus-dir` takes any tree of text; the planted facts and the question are the same, the filler text is yours. The depth rows in this file up to 2026-11-22 were meant to use the source and docs of a private config repo. The reader took files in path order, and a hidden directory of browser page snapshots (YAML accessibility-tree dumps) sorted first, so those prompts are that YAML, in which about one line in five repeats an earlier one. A unique first line keeps the prefix cache out either way. On plain prose prefill measures 2% to 3% lower and drafter-on decode at depth 7% to 14% lower ([Depth on plain prose](#depth-on-plain-prose-with-draft-acceptance)); drafter-off decode should not depend on the text and was not re-measured; retrieval was not re-run on prose. The reader now skips hidden files and directories.
 - **Unpacked image:** the rows not labelled `packaged image` came from `tools/serve.sh '"device=0,1"' 8000 /tmp/serve.log --tensor-parallel-size 2 --max-model-len 196608 --max-num-batched-tokens 2048 --max-num-seqs 4 --gpu-memory-utilization 0.92 --reasoning-parser inkling --tool-call-parser inkling --enable-auto-tool-choice` on a copy of the image unpacked with `tools/fetch_rootfs.sh`, with the same kernel swap and patches applied.
