@@ -69,7 +69,7 @@ Other Ampere routes for this model, with the numbers their authors published as 
 
 | Project | Hardware | Weights | Decode, no drafter | With drafter | Prefill | Window |
 |---|---|---|---|---|---|---|
-| **This repo** | 2× RTX 3090, NVLink, 300 W | original | 143 | 184–328 | 5.8–8.0K | 196K; with other flags 426K with images and the drafter, 467K–590K text only |
+| **This repo** | 2× RTX 3090, NVLink, 300 W | original | 143 | 183–328 | 5.8–8.0K | 196K; with other flags 426K with images and the drafter, 467K–590K text only |
 | [agent2x0r/inkling2-sm86-kernels](https://github.com/agent2x0r/inkling2-sm86-kernels) (vLLM) | 2× RTX 3090, NVLink, 225 W | original | 115 | 136–210 | 4.9–5.7K | 65K |
 | [lulakien/inkling2-mini-3090-recipe](https://github.com/lulakien/inkling2-mini-3090-recipe) (vLLM) | 2× RTX 3090, PCIe, 280 W | original experts; attention, head and drafter in INT8; needs the `gpu-unlock` kernel module for its prefill figures | 130 | 126–313; 129–323 at 350 W | 6.3–7.5K; 6.6–7.8K at 350 W | 262K |
 | [tonyd2wild/Inkling-2-Mini-W4A16-RTX3090](https://github.com/tonyd2wild/Inkling-2-Mini-W4A16-RTX3090) (vLLM) | 2× RTX 3090, NVLink, 240 W | experts re-quantized to INT4 | 94 | 138 | 3.1K at 32K | 459K |

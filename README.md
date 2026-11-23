@@ -8,7 +8,7 @@ vLLM does not run [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkli
 | Engine | `vllm/vllm-openai:inkling-2-mini` by digest (vLLM `0.1.dev25855+g7cb5dae22`): compiled kernels swapped, five source patches, one tuning patch |
 | Tested on | 2× RTX 3090 (sm_86, 24 GB) at 300 W, NVLink, tensor parallel 2 |
 | Window | 196,608 tokens (KV pool 246,986); filled to 190K. With other flags, booted and filled: 425,984 with images and the drafter, 466,944 text only, 589,824 text only without the drafter ([long windows](NOTES.md#long-windows)) |
-| Decode, one request | 143 tok/s without the drafter; with it 184 (prose), 215 (chat), 241 (code), 328 (JSON tool calls), medians of three |
+| Decode, one request | 143 tok/s without the drafter; with it 183 (prose), 215 (chat), 241 (code), 328 (JSON tool calls), medians of three |
 | Decode at depth | 131 tok/s at 32K, 107 at 120K, without the drafter; with it, 145 at 110K and 130 at 190K on plain prose |
 | Prefill | 7,600 tok/s at 3K, 8,000 at 8K, 7,630 at 24K, 5,860 at 120K (20.5 s to first token), on plain prose |
 | Several requests | 535 tok/s aggregate at 4, 747 to 778 at 8; with `--max-num-seqs 64`, 1,167 at 16 and 2,058 at 64 |

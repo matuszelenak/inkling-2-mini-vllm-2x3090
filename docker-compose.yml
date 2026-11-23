@@ -13,7 +13,7 @@
 # setups").
 #
 # Measured 2026-11-23 with the tuning patch (BENCH.md): 143 tok/s decode
-# without the drafter and 184-328 with it; 134 tok/s at 24K depth, 107 at
+# without the drafter and 183-328 with it; 134 tok/s at 24K depth, 107 at
 # 120K; prefill 7,630 tok/s at 24K and 5,860 at 120K; 747-778 tok/s aggregate
 # at 8 requests; GSM8K-200 96.5-98.0% (193 to 196 of 200 across runs).
 # ============================================================================
