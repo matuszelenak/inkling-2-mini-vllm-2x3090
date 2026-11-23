@@ -2,6 +2,14 @@
 
 vLLM does not run [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) natively on Ampere cards. Here I've patched the official vLLM docker image with Ampere support and tuned it to make it fast. The base serving config is for dual RTX 3090s using an NVLink bridge. Other sm_86 cards and pairs without a bridge are reported to work with patches like these, but I haven't tested them with this config.
 
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/speed-overview-dark.png">
+    <img src="assets/speed-overview-light.png" alt="Inkling 2 Mini on two RTX 3090s: decode and prefill by prompt length, what the drafter adds, and aggregate throughput at 1 to 8 requests, against llama.cpp on the same cards" width="720">
+  </picture>
+</p>
+
 > **Updated November 23, 2026.** A faster build since the first release, on the same weights and the same unquantized KV cache:
 >
 > - Prefill is about 13% faster on prompts of 8K tokens and up, and 3% to 13% faster on prompts of 1.5K to 7K. A cold 120K prompt reaches its first token in 20.5 seconds, down from 23.
@@ -11,13 +19,6 @@ vLLM does not run [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkli
 > - Long-prompt numbers are now measured on plain prose. The first release measured them on repetitive text, which made decode with the drafter look faster at depth than it is.
 >
 > To pick it up: `git pull`, `docker compose build`, `docker compose up -d`. What changed and how it was checked is in [NOTES.md](NOTES.md#tuning) and [BENCH.md](BENCH.md).
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/speed-overview-dark.png">
-    <img src="assets/speed-overview-light.png" alt="Inkling 2 Mini on two RTX 3090s: decode and prefill by prompt length, what the drafter adds, and aggregate throughput at 1 to 8 requests, against llama.cpp on the same cards" width="720">
-  </picture>
-</p>
 
 [Full write up on the porting process](https://peaster.io/articles/local-LLMs/inkling-2-mini-first-impressions) and [Reddit discussion](https://www.reddit.com/r/LocalLLaMA/comments/1y2gxo7/inkling_absolutely_rips_200_toks_decode_6700/)
 
