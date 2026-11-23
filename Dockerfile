@@ -10,7 +10,7 @@
 # and fail the build otherwise: bump the digest and re-derive, do not force.
 FROM vllm/vllm-openai:inkling-2-mini@sha256:c2dc759f5984f69c1e2418c6af7c26eb756f5ed2a8934c768ae1253645d1449e
 
-COPY install_sm86_kernels.py apply_sm86_patch.py patches/sm86-tune.diff /tmp/sm86/
+COPY install_sm86_kernels.py apply_sm86_patch.py patches/sm86-tune.diff patches/draft_vocab_rank.json /tmp/sm86/
 
 # 1. Compiled kernels. The image's _C / _moe_C extensions are Blackwell-only;
 #    swap in the general-arch ones from the matching per-commit wheel
@@ -20,24 +20,32 @@ COPY install_sm86_kernels.py apply_sm86_patch.py patches/sm86-tune.diff /tmp/sm8
 #    uses; Triton emits no griddepcontrol and requests no PDL launch below
 #    sm_90.
 # 3. Tuning (patches/sm86-tune.diff, applied with no fuzz): faster decode and
-#    prefill on Ampere. INKLING_SM86_TUNE=none at run time switches it off.
+#    prefill on Ampere, and a conv-state cache that leaves room for 8,192-token
+#    prefill chunks. INKLING_SM86_TUNE=none at run time switches it off (and
+#    then needs --max-num-batched-tokens 2048).
+#    patches/draft_vocab_rank.json is the token ranking its reduced draft
+#    vocabulary reads (English text and code; NOTES.md, "Tuning").
 RUN set -eux; \
     site="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
     test -d "$site/vllm/models/inkling2"; \
     python3 /tmp/sm86/install_sm86_kernels.py "$site"; \
     python3 /tmp/sm86/apply_sm86_patch.py "$site"; \
     patch -p1 --fuzz=0 -d "$site" < /tmp/sm86/sm86-tune.diff; \
+    install -m 644 /tmp/sm86/draft_vocab_rank.json "$site/vllm/models/inkling2/draft_vocab_rank.json"; \
     python3 -m py_compile "$site/vllm/models/inkling2/quant_config.py" \
         "$site/vllm/models/inkling2/nvidia/ops/conv_mix.py" \
         "$site/vllm/models/inkling2/nvidia/ops/linear.py" \
         "$site/vllm/models/inkling2/nvidia/vision.py" \
         "$site/vllm/models/inkling2/nvidia/attention.py" \
         "$site/vllm/models/inkling2/nvidia/dspark.py" \
+        "$site/vllm/models/inkling2/speculator.py" \
         "$site/vllm/models/inkling2/nvidia/loop.py" \
         "$site/vllm/models/inkling2/nvidia/ops/gemv.py" \
         "$site/vllm/models/inkling2/nvidia/ops/moe_sm90.py" \
         "$site/vllm/models/inkling2/nvidia/ops/moe_align_small.py" \
         "$site/vllm/models/inkling2/nvidia/ops/attention_sm90.py" \
+        "$site/vllm/models/inkling2/nvidia/ops/sconv.py" \
+        "$site/vllm/models/inkling/nvidia/sconv_swa_attn.py" \
         "$site/vllm/v1/core/sched/scheduler.py" \
         "$site/vllm/v1/spec_decode/dynamic/adaptive_k.py" \
         "$site/triton/language/extra/cuda/gdc.py" \

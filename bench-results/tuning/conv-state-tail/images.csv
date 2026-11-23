@@ -1,0 +1,8 @@
+label,width,height,ok,correct,prompt_n,gen_n,wall_s,gpu0_used_mib,gpu1_used_mib,error
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",64,64,1,1,72,83,0.3,23154,23146,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",512,512,1,1,237,73,0.3,23158,23150,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",1024,768,1,1,588,73,0.4,23160,23152,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",768,1024,1,1,588,73,0.3,23160,23152,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",2048,2048,1,1,2772,84,0.9,23160,23152,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",4096,1024,1,1,2746,87,0.9,23160,23152,
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",4096,4096,0,0,,,0.1,23160,23152,"HTTP 400: {""error"":{""message"":""The decoder prompt contains a(n) image item with 10609 embedding tokens, which exceeds the pre-allocated encoder cache size 8192. Please re"

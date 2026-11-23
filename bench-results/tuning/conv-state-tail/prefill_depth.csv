@@ -1,0 +1,8 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 8000,0.0,8173,1.03,7970.0,204,453.46,5,5,stop,1.5
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 8000,0.0,8176,1.02,7983.1,210,463.61,5,5,stop,1.5
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 8000,0.0,8175,1.02,7977.3,136,421.90,5,5,stop,1.3
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 24000,0.0,24173,3.17,7616.4,200,428.97,5,5,stop,3.6
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 24000,0.0,24179,3.17,7617.6,210,477.72,5,5,stop,3.6
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 64000,0.0,64178,9.50,6756.2,217,426.50,5,5,stop,10.0
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",deep 120000,0.0,120176,20.57,5843.2,233,378.38,5,5,stop,21.2

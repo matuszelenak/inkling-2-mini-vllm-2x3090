@@ -1,0 +1,8 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"images + drafter, 8192 chunks (as shipped), 262144 window",deep 250000,0.0,250180,55.65,4495.5,248,268.37,5,5,stop,56.6
+"images + drafter, 2048 chunks, 425984 window",deep 415000,0.0,415174,138.26,3002.8,217,198.73,5,5,stop,139.3
+"text only, no drafter, 2048 chunks, 589824 window",deep 578000,0.0,578175,237.61,2433.3,243,55.71,5,5,stop,242.0
+"text only, drafter, 2048 chunks, 466944 window",deep 456000,0.0,456175,160.11,2849.1,2048,238.86,5,0,length,168.7
+"text only, drafter, 2048 chunks, repeat, 466944 window",deep 456000,0.0,456176,160.52,2841.9,299,185.61,5,5,stop,162.1
+"text only, drafter, 2048 chunks, repeat, 466944 window",deep 456000,0.0,456177,161.55,2823.8,757,126.74,5,5,stop,167.5
+"text only, drafter, 2048 chunks, repeat, 466944 window",deep 430000,0.0,430175,147.33,2919.9,217,203.66,5,5,stop,148.4

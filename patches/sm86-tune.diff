@@ -4,10 +4,241 @@ Measured on 2x RTX 3090 (sm_86): BENCH.md, "Tuning". Switch: INKLING_SM86_TUNE=a
 The small-matmul kernel tiles, the fused q/k/v launch, the loop-controller kernels, the drafter fold, the
 draft-length range, the long-prompt attention loop and the one-kernel expert alignment are adapted from
 snailbrainx/inkling-2-mini-sm80 (Apache-2.0, https://github.com/snailbrainx/inkling-2-mini-sm80).
+The conv-state cache that backs only each step's tail (SconvStateManager, and the conv's skipped stores into the
+null block) is adapted from Pento95/HyperInkling (Apache-2.0, https://github.com/Pento95/HyperInkling); its
+checkpoints at the prefix-cache retention interval are added here.
 Added here: the shared-memory fit for sm_86, the expert-GEMM kernel configs, router and attention tiles measured
 on sm_86, the draft length chosen per step from recent acceptance (scheduler hook +
-spec_decode/dynamic/adaptive_k.py), and the switches.
+spec_decode/dynamic/adaptive_k.py), the reduced draft vocabulary, and the switches.
 
+diff -ruN a/vllm/models/inkling/nvidia/sconv_swa_attn.py b/vllm/models/inkling/nvidia/sconv_swa_attn.py
+--- a/vllm/models/inkling/nvidia/sconv_swa_attn.py
++++ b/vllm/models/inkling/nvidia/sconv_swa_attn.py
+@@ -16,7 +16,9 @@
+ 
+ from __future__ import annotations
+ 
++import os
+ from dataclasses import dataclass
++from collections.abc import Sequence
+ from typing import ClassVar
+ 
+ import torch
+@@ -32,8 +34,18 @@
+     AttentionMetadataBuilder,
+     CommonAttentionMetadata,
+ )
+-from vllm.v1.core.single_type_kv_cache_manager import SlidingWindowManager
+-from vllm.v1.kv_cache_interface import AttentionSpec, KVCacheLayerConfig
++from vllm.v1.core.single_type_kv_cache_manager import (
++    DFlashSlidingWindowManager,
++    SlidingWindowManager,
++)
++from vllm.utils.math_utils import cdiv
++from vllm.v1.core.kv_cache_utils import KVCacheBlock
++from vllm.v1.kv_cache_interface import (
++    AttentionSpec,
++    KVCacheGroup,
++    KVCacheLayerConfig,
++    ManagerConfig,
++)
+ 
+ from .ops.sconv import sconv_seq_metadata
+ 
+@@ -41,6 +53,174 @@
+ _K, _V, _ATTN, _MLP = 0, 1, 2, 3
+ 
+ 
++def _conv_tail_enabled() -> bool:
++    # Same switch as the rest of the sm_86 tuning (inkling2/nvidia/ops/gemv.py).
++    features = os.environ.get("INKLING_SM86_TUNE", "all")
++    return features == "all" or "convtail" in features.split(",")
++
++
++def _conv_checkpoint_tokens(vllm_config: VllmConfig) -> int:
++    """Tokens between conv-state checkpoints inside a prefill chunk; 0 is none.
++
++    Follows `--prefix-cache-retention-interval`: at its default of 0 only the
++    ends of steps can be hit (the scheduler ends chunks at replay boundaries
++    and shared-prefix junctions), a positive interval keeps conv state at that
++    interval as well, and `None` (dense) at every hit alignment.
++    """
++    interval = vllm_config.cache_config.prefix_cache_retention_interval
++    if interval is None:
++        return vllm_config.cache_config.block_size
++    return interval
++
++
++class SconvStateManager(DFlashSlidingWindowManager):
++    """Conv-state cache that backs only each step's tail, plus sparse checkpoints.
++
++    The tail-only part is adapted from Pento95/HyperInkling (Apache-2.0); the
++    checkpoints are added here.
++
++    The conv reads cached taps only for the first `W - 1` tokens of a step
++    (later taps come from the step's own inputs), so a step needs real blocks
++    just for its last tokens: the window, the drafts in flight that may be
++    rejected, and one hit alignment so that a prefix hit at the aligned
++    position below the step's end finds its window. The rest of a prefill
++    chunk is null, and the conv skips its stores there.
++
++    Hits use the plain sliding-window rule (`h` needs the window before `h`).
++    Inside a chunk that leaves only the checkpoints, which exist when the
++    prefix-cache retention interval asks for them: the one block below every
++    `checkpoint_tokens` boundary stays real.
++    """
++
++    @dataclass(frozen=True, slots=True)
++    class Params(DFlashSlidingWindowManager.Params):
++        hit_alignment_tokens: int = 0
++        checkpoint_tokens: int = 0
++
++        @property
++        def tail_tokens(self) -> int:
++            return (
++                self.sliding_window
++                + self.num_speculative_tokens * self.max_in_flight_steps
++                + self.hit_alignment_tokens
++            )
++
++    find_longest_cache_hit = SlidingWindowManager.__dict__["find_longest_cache_hit"]
++    reachable_block_mask = SlidingWindowManager.__dict__["reachable_block_mask"]
++
++    @classmethod
++    def max_admission_blocks(
++        cls,
++        config: ManagerConfig,
++        block_size: int,
++        max_in_flight_tokens: int,
++        max_model_len: int,
++    ) -> int | None:
++        params = config.params
++        assert isinstance(params, SconvStateManager.Params)
++        tail_blocks = super().max_admission_blocks(
++            config, block_size, max_in_flight_tokens, max_model_len
++        )
++        if tail_blocks is None or not params.checkpoint_tokens:
++            return tail_blocks
++        # Every token in flight backed: the plain sliding-window bound.
++        window_blocks = SlidingWindowManager.max_admission_blocks(
++            config,
++            block_size,
++            max_in_flight_tokens + params.num_lookahead_tokens,
++            max_model_len,
++        )
++        assert window_blocks is not None
++        # Checkpoints are freed with the processed prefix, so a request holds
++        # those of its chunks in flight.
++        checkpoints = (
++            cdiv(max_in_flight_tokens, params.checkpoint_tokens)
++            + params.max_in_flight_steps
++        )
++        return min(window_blocks, tail_blocks + checkpoints)
++
++    def __init__(self, kv_cache_group: KVCacheGroup, **kwargs) -> None:
++        super().__init__(kv_cache_group, **kwargs)
++        params = self.manager_config.params
++        assert isinstance(params, SconvStateManager.Params)
++        assert self.cache_hit_alignment_tokens <= params.hit_alignment_tokens, (
++            "conv-state tails shorter than the prefix-hit alignment"
++        )
++        # Blocks between checkpoints; 0 without prefix caching.
++        self._checkpoint_blocks = 0
++        if params.checkpoint_tokens and self.enable_caching:
++            assert params.checkpoint_tokens % params.hit_alignment_tokens == 0
++            assert params.checkpoint_tokens % self.block_size == 0
++            assert params.sliding_window - 1 <= self.block_size
++            self._checkpoint_blocks = params.checkpoint_tokens // self.block_size
++
++    def _num_checkpoints(self, first_block: int, last_block: int) -> int:
++        """Checkpoint blocks among block indices `[first_block, last_block)`:
++        those that end on a checkpoint boundary."""
++        interval = self._checkpoint_blocks
++        if not interval or last_block <= first_block:
++            return 0
++        return last_block // interval - first_block // interval
++
++    def get_num_blocks_to_allocate(
++        self,
++        request_id: str,
++        num_tokens: int,
++        new_computed_blocks: Sequence[KVCacheBlock],
++        total_computed_tokens: int,
++        num_local_computed_tokens: int,
++        num_tokens_main_model: int,
++        apply_admission_cap: bool = False,
++        prefill_end: int = 0,
++    ) -> int:
++        num_blocks = super().get_num_blocks_to_allocate(
++            request_id,
++            num_tokens,
++            new_computed_blocks,
++            total_computed_tokens,
++            num_local_computed_tokens,
++            num_tokens_main_model,
++            apply_admission_cap=apply_admission_cap,
++            prefill_end=prefill_end,
++        )
++        first_new = len(self.req_to_blocks.get(request_id, ())) + len(
++            new_computed_blocks
++        )
++        return num_blocks + self._num_checkpoints(
++            first_new, self._num_unbacked_leading_blocks(num_tokens_main_model)
++        )
++
++    def allocate_new_blocks(
++        self, request_id: str, num_tokens: int, num_tokens_main_model: int
++    ) -> list[KVCacheBlock]:
++        req_blocks = self.req_to_blocks[request_id]
++        first_new = len(req_blocks)
++        new_blocks = super().allocate_new_blocks(
++            request_id, num_tokens, num_tokens_main_model
++        )
++        interval = self._checkpoint_blocks
++        if not interval:
++            return new_blocks
++        # super() appended the unbacked run first: `new_blocks[i]` is
++        # `req_blocks[first_new + i]` while it is null.
++        num_nulls = 0
++        while num_nulls < len(new_blocks) and new_blocks[num_nulls].is_null:
++            num_nulls += 1
++        checkpoints = [
++            i
++            for i in range(first_new, first_new + num_nulls)
++            if (i + 1) % interval == 0
++        ]
++        if checkpoints:
++            backed = self.block_pool.get_new_blocks(len(checkpoints))
++            for i, block in zip(checkpoints, backed):
++                req_blocks[i] = block
++                new_blocks[i - first_new] = block
++            if self._record_new_block_ids:
++                self.new_block_ids.extend(b.block_id for b in backed)
++        return new_blocks
++
++
+ @dataclass
+ class InklingSconvMetadata(AttentionMetadata):
+     block_table: torch.Tensor  # [num_reqs, max_blocks] physical blocks per req
+@@ -203,6 +383,16 @@
+             head_size_v=0,  # all 4 streams packed into head_size
+             dtype=self._dtype,
+         )
+-        return SlidingWindowManager.layer_config(
+-            spec, sliding_window=self.sliding_window
++        if not _conv_tail_enabled():
++            return SlidingWindowManager.layer_config(
++                spec, sliding_window=self.sliding_window
++            )
++        return SconvStateManager.layer_config(
++            spec,
++            sliding_window=self.sliding_window,
++            num_speculative_tokens=vllm_config.num_speculative_tokens,
++            max_in_flight_steps=vllm_config.max_concurrent_batches,
++            num_lookahead_tokens=vllm_config.num_lookahead_tokens,
++            hit_alignment_tokens=vllm_config.cache_config.block_size,
++            checkpoint_tokens=_conv_checkpoint_tokens(vllm_config),
+         )
 diff -ruN a/vllm/models/inkling2/nvidia/attention.py b/vllm/models/inkling2/nvidia/attention.py
 --- a/vllm/models/inkling2/nvidia/attention.py
 +++ b/vllm/models/inkling2/nvidia/attention.py
@@ -54,10 +285,43 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
  from .ops.linear import linear
  
  
-@@ -382,6 +384,11 @@
+@@ -343,6 +345,19 @@
+         self.fold_weight: torch.Tensor | None = None
+         self.fold_bias: torch.Tensor | None = None
+         self.rnn_bias: torch.Tensor | None = None
++        # Reduced draft vocabulary (INKLING_SM86_TUNE: dvocab): the fold for the kept rows only.
++        self.fold_weight_red: torch.Tensor | None = None
++        self.fold_bias_red: torch.Tensor | None = None
++
++    @torch.no_grad()
++    def reduce(self, rows: torch.Tensor) -> None:
++        """Copy the fold of the kept (TP-local) rows; refilled in place like `fold`."""
++        assert self.fold_weight is not None and self.fold_bias is not None
++        if self.fold_weight_red is None or self.fold_bias_red is None:
++            self.fold_weight_red = self.fold_weight.new_empty((rows.numel(), self.markov_rank))
++            self.fold_bias_red = self.fold_bias.new_empty((rows.numel(),))
++        self.fold_weight_red.copy_(self.fold_weight[rows])
++        self.fold_bias_red.copy_(self.fold_bias[rows])
+ 
+     @torch.no_grad()
+     def fold(self, lm_head_weight: torch.Tensor) -> None:
+@@ -374,14 +389,22 @@
+         return out.view(hidden.shape[0], num_reqs, -1)
+ 
+     def step(
+-        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor
++        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor, reduced: bool = False
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+-        """One recurrence step; returns the new state and the TP-local bias."""
++        """One recurrence step; returns the new state and the TP-local bias (over the kept rows if `reduced`)."""
+         assert self.fold_weight is not None and self.fold_bias is not None
+         inputs = torch.cat([state, self.markov_w1(prev_tokens)], dim=-1)
          weight = self.rnn_proj.weight[:, : 2 * self.markov_rank]
          raw = torch.addmm(context, inputs, weight.T, out_dtype=torch.float32)
          state, latent = markov_gate(raw, state)
++        if reduced:
++            assert self.fold_weight_red is not None and self.fold_bias_red is not None
++            return state, torch.addmm(self.fold_bias_red, latent, self.fold_weight_red.T)
 +        # sm_80 (Ampere): the (vocab, r) fold through the low-M gemv, ~15% faster than cuBLAS's kernel here.
 +        if tune("fold") and current_platform.is_device_capability_family(80) and use_sm12x_bf16_gemv(
 +            latent, self.fold_weight, self.fold_bias
@@ -66,7 +330,7 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
          return state, torch.addmm(self.fold_bias, latent, self.fold_weight.T)
  
  
-@@ -465,11 +472,15 @@
+@@ -465,11 +488,15 @@
          config = vllm_config.speculative_config.draft_model_config.hf_config
          assert isinstance(config, Inkling2DSparkConfig)
          num_spec = vllm_config.speculative_config.num_speculative_tokens
@@ -84,6 +348,93 @@ diff -ruN a/vllm/models/inkling2/nvidia/dspark.py b/vllm/models/inkling2/nvidia/
          if vllm_config.model_config.max_model_len > config.max_position_embeddings:
              raise ValueError(
                  "Inkling2 DSpark drafts up to max_position_embeddings="
+@@ -503,6 +530,7 @@
+         assert head.rnn_bias is not None
+         head.fold(self.lm_head.weight)
+         head.rnn_bias.copy_(head.rnn_proj.bias)
++        self._refresh_draft_vocab()
+         self.model.fuse_alpha.copy_(
+             torch.softmax(self.model.fuse_weight.float(), dim=-1)
+         )
+@@ -510,6 +538,65 @@
+     def get_draft_kv_cache_layer_names(self) -> list[str]:
+         return [layer.self_attn.attn.layer_name for layer in self.model.layers]
+ 
++    # ---- reduced draft vocabulary (Ampere tuning, INKLING_SM86_TUNE: dvocab) ----------------------------------
++    # The drafter's base logits read the whole TP-local LM head (100,512 x 2,304 bf16, about 0.54 ms per step on
++    # an RTX 3090), each draft position projects its Markov latent onto every row and all-gathers full-vocabulary
++    # logits: about 1.2 ms per step in all. Drafting over the K most likely ids of each shard reads K rows instead.
++    # The ranking (draft_vocab_rank.json beside this package's __init__) is built from English text, code and
++    # model output; INKLING_SM86_DVOCAB=off switches it off, or names another ranking file, and
++    # INKLING_SM86_DVOCAB_K sets K (default 24576, which covers about 99% of that kind of text). Draft and verification stay consistent: the kept logits are
++    # scattered into a full-vocabulary row that is -inf elsewhere, so the draft is sampled from, and verified
++    # against, the same renormalised distribution. A token outside the set can never be drafted; the target
++    # still produces it.
++    draft_rows: torch.Tensor | None = None            # kept TP-local rows of this rank
++    draft_scatter_index: torch.Tensor | None = None   # global ids of the gathered reduced logits, rank by rank
++    lm_head_red: torch.Tensor | None = None
++
++    @torch.no_grad()
++    def _refresh_draft_vocab(self) -> None:
++        import json
++        import os
++
++        path = os.environ.get("INKLING_SM86_DVOCAB")
++        if path is None and tune("dvocab"):
++            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "draft_vocab_rank.json")
++        if not path or path == "off" or not os.path.exists(path):
++            return
++        assert self.lm_head is not None
++        weight = self.lm_head.weight
++        shard, tp = weight.shape[0], get_tensor_model_parallel_world_size()
++        keep = int(os.environ.get("INKLING_SM86_DVOCAB_K", "24576"))
++        ranking = [int(t) for t in json.load(open(path))]
++        limit = self.config.vocab_size
++        per_shard: list[list[int]] = []
++        for s in range(tp):
++            lo, hi = s * shard, min((s + 1) * shard, limit)
++            ids = [t for t in ranking if lo <= t < hi][:keep]
++            have = set(ids)
++            fill = (t for t in range(lo, hi) if t not in have)
++            while len(ids) < keep:
++                ids.append(next(fill))
++            per_shard.append(sorted(ids))
++        mine = per_shard[get_tp_group().rank_in_group]
++        rows = torch.tensor([t % shard for t in mine], dtype=torch.int64, device=weight.device)
++        if self.lm_head_red is None:
++            self.draft_rows = rows
++            self.draft_scatter_index = torch.tensor(
++                [t for ids in per_shard for t in ids], dtype=torch.int64, device=weight.device
++            )
++            self.lm_head_red = weight.new_empty((keep, weight.shape[1]))
++        self.lm_head_red.copy_(weight[rows])
++        self.model.markov_head.reduce(rows)
++
++    def compute_base_logits_reduced(self, hidden_states: torch.Tensor) -> torch.Tensor:
++        assert self.lm_head_red is not None
++        return linear(hidden_states, self.lm_head_red)
++
++    def markov_logits_reduced(self, base_logits: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
++        """Softcapped logits over the kept ids of every rank, in `draft_scatter_index` order."""
++        logits = add_softcap(base_logits, bias, self.config.final_logit_softcapping)
++        return tensor_model_parallel_all_gather(logits)
++
+     def combine_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         # Each draft layer mixes the raw target features itself.
+         return hidden_states
+@@ -547,10 +634,10 @@
+         return linear(hidden_states, self.lm_head.weight)
+ 
+     def markov_step(
+-        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor
++        self, state: torch.Tensor, prev_tokens: torch.Tensor, context: torch.Tensor, reduced: bool = False
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+         """Advance the recurrent head; return the state and TP-local bias."""
+-        return self.model.markov_head.step(state, prev_tokens, context)
++        return self.model.markov_head.step(state, prev_tokens, context, reduced)
+ 
+     def markov_logits(
+         self, base_logits: torch.Tensor, bias: torch.Tensor
 diff -ruN a/vllm/models/inkling2/nvidia/loop.py b/vllm/models/inkling2/nvidia/loop.py
 --- a/vllm/models/inkling2/nvidia/loop.py
 +++ b/vllm/models/inkling2/nvidia/loop.py
@@ -547,7 +898,7 @@ diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_align_small.py b/vllm/models/ink
 diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_sm90.py b/vllm/models/inkling2/nvidia/ops/moe_sm90.py
 --- a/vllm/models/inkling2/nvidia/ops/moe_sm90.py
 +++ b/vllm/models/inkling2/nvidia/ops/moe_sm90.py
-@@ -9,23 +9,46 @@
+@@ -9,23 +9,51 @@
  """
  
  import json
@@ -579,8 +930,13 @@ diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_sm90.py b/vllm/models/inkling2/n
 +_SM86 = current_platform.is_device_capability(86)
 +# Decode-sized batches (up to 448 local rows): 5-7% over the heuristic at 8 tokens, 20% at 1.
 +_HUMMING_DECODE = {"block_shape": [8, 128, 64], "warp_shape": [8, 32, 64], "num_stages": 4, "num_ctas_per_sm": 2}
-+# Prefill-sized batches where the heuristic picks 64-row blocks: 7%, same results.
-+_HUMMING_PREFILL = {"warp_shape": [64, 64, 64], "num_ctas_per_sm": 2}
++# Prefill-sized batches (above 5,568 local rows, about 1,400 tokens): the heuristic alternates 64-, 96- and
++# 128-row blocks by row count; 64-row blocks with these warps are 5-17% faster at every count measured, same results.
++_HUMMING_PREFILL = {"block_shape": [64, 256, 64], "warp_shape": [64, 64, 64], "num_stages": 2, "num_ctas_per_sm": 2}
++_HUMMING_PREFILL_MXFP8 = {"block_shape": [64, 256, 64], "warp_shape": [64, 32, 64], "num_stages": 3, "num_ctas_per_sm": 1}
++# Below 14,784 local rows (about 3,600 tokens) an expert sees few rows and 64-row blocks are mostly padding:
++# 48-row blocks are another 1-4% faster there (NVFP4 layers; not measured on the MXFP8 ones).
++_HUMMING_PREFILL_SMALL = {"block_shape": [48, 256, 64], "warp_shape": [48, 64, 64]}
 +_ALIGN_SMALL = tune("align") and not current_platform.has_device_capability(90)
 +
 +
@@ -595,7 +951,7 @@ diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_sm90.py b/vllm/models/inkling2/n
  # Row block size when no Humming tuning range covers the row count.
  _DEFAULT_BLOCK_M = 64
  
-@@ -229,6 +252,16 @@
+@@ -229,6 +257,19 @@
              # whose order (and so the result) changes from run to run.
              for _, _, kernel_config in tuning:
                  kernel_config["use_stream_k"] = False
@@ -606,12 +962,76 @@ diff -ruN a/vllm/models/inkling2/nvidia/ops/moe_sm90.py b/vllm/models/inkling2/n
 +                    if upper <= 448:
 +                        kernel_config.update(decode)
 +            if _SM86 and tune("humming_big"):
++                prefill = _HUMMING_PREFILL if nvfp4 else _HUMMING_PREFILL_MXFP8
 +                for lower, _, kernel_config in tuning:
-+                    if lower >= 4096 and kernel_config["block_shape"][0] == 64:
-+                        kernel_config.update(_HUMMING_PREFILL)
++                    if lower >= 5568:
++                        kernel_config.update(prefill)
++                        if nvfp4 and lower < 14784:
++                            kernel_config.update(_HUMMING_PREFILL_SMALL)
              self.configs[name] = config
              self.tensors[name] = tensors
              self.tunings[name] = tuning
+diff -ruN a/vllm/models/inkling2/nvidia/ops/sconv.py b/vllm/models/inkling2/nvidia/ops/sconv.py
+--- a/vllm/models/inkling2/nvidia/ops/sconv.py
++++ b/vllm/models/inkling2/nvidia/ops/sconv.py
+@@ -260,7 +260,8 @@
+         + (safe_slot % N)[:, None] * stride_c_n
+         + cache_col[None, :]
+     )
+-    tl.store(dst, cur, mask=tc_mask & valid[:, None])
++    # Block 0 is the null block: with the tail-only conv-state manager, tokens below a step's tail have no state.
++    tl.store(dst, cur, mask=tc_mask & (slot >= N)[:, None])
+ 
+     tap_args = (
+         x_ptr,
+diff -ruN a/vllm/models/inkling2/speculator.py b/vllm/models/inkling2/speculator.py
+--- a/vllm/models/inkling2/speculator.py
++++ b/vllm/models/inkling2/speculator.py
+@@ -44,6 +44,16 @@
+     ) -> nn.Module:
+         model = load_dspark_model(target_model, self.vllm_config)
+         model.attach_target(target_model.get_language_model())
++        # Reduced draft vocabulary (INKLING_SM86_TUNE: dvocab, nvidia/dspark.py): `_sample_logits` scatters the kept logits
++        # into this full-vocabulary row before sampling and caching them for verification.
++        if self.use_draft_logits and model.draft_scatter_index is not None:
++            self._d2t_scatter_index = model.draft_scatter_index
++            self._draft_scatter_buf = torch.full(
++                (self.max_num_reqs, self.vocab_size),
++                float("-inf"),
++                dtype=self.draft_logits_spec(self.vllm_config)[0],
++                device=self.device,
++            )
+         return model
+ 
+     def prepare_context_anchor(
+@@ -61,17 +71,24 @@
+         n_spec = self.num_speculative_steps
+         num_sample = num_reqs * n_spec
+         hidden = head_hidden[self.sample_indices[:num_sample]]
+-        base_logits = self.model.compute_base_logits(hidden).view(num_reqs, n_spec, -1)
++        reduced = self._d2t_scatter_index is not None and self.draft_logits is not None
++        base_logits = (
++            self.model.compute_base_logits_reduced(hidden) if reduced else self.model.compute_base_logits(hidden)
++        ).view(num_reqs, n_spec, -1)
+         context = self.model.model.markov_head.context(hidden, self.f_rnn[:num_reqs])
+         idx_map = self.sample_idx_mapping[:num_sample].view(num_reqs, n_spec)
+         sample_pos = self.sample_pos[:num_sample].view(num_reqs, n_spec)
+         state = hidden.new_zeros(num_reqs, self.model.config.markov_rank)
+         prev = self.input_buffers.input_ids[self._anchor_idx[:num_reqs]]
+         for i in range(n_spec):
+-            state, bias = self.model.markov_step(state, prev, context[i])
++            state, bias = self.model.markov_step(state, prev, context[i], reduced)
+             if self.draft_logits is None:
+                 prev = self.model.markov_argmax(base_logits[:, i], bias)
+             else:
+-                logits = self.model.markov_logits(base_logits[:, i], bias)
++                logits = (
++                    self.model.markov_logits_reduced(base_logits[:, i], bias)
++                    if reduced
++                    else self.model.markov_logits(base_logits[:, i], bias)
++                )
+                 prev = self._sample_logits(logits, idx_map[:, i], sample_pos[:, i], i)
+             self.draft_tokens[:num_reqs, i] = prev
 diff -ruN a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
 --- a/vllm/v1/core/sched/scheduler.py
 +++ b/vllm/v1/core/sched/scheduler.py

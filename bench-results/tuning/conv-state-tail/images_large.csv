@@ -1,0 +1,8 @@
+label,width,height,ok,correct,prompt_n,gen_n,wall_s,gpu0_used_mib,gpu1_used_mib,error
+"candidate tune3, large images",2304,2304,1,1,3432,84,1.2,19884,19876,
+"candidate tune3, large images",2560,2560,1,1,4164,103,1.4,20324,20316,
+"candidate tune3, large images",3072,3072,1,1,5997,84,2.1,20642,20634,
+"candidate tune3, large images",3328,3328,1,1,7124,87,2.7,21240,21232,
+"candidate tune3, large images",3584,3584,1,1,8168,89,3.2,21672,21664,
+"candidate tune3, large images",3840,3840,0,0,,,0.1,21672,21664,"HTTP 400: {""error"":{""message"":""The decoder prompt contains a(n) image item with 9216 embedding tokens, which exceeds the pre-allocated encoder cache size 8192. Please red"
+"candidate tune3, large images",6000,1500,1,1,5768,76,2.0,21672,21664,

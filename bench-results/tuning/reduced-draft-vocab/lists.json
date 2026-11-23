@@ -1,0 +1,48 @@
+{
+ "label": "tune2, compose as shipped, effort none",
+ "effort": "none",
+ "runs": [
+  {
+   "users": 1,
+   "completion_tokens": 1024,
+   "wall_s": 2.2506927349895705,
+   "aggregate_tok_s": 454.97103362034227,
+   "per_stream_decode_tok_s": 476.89465955983223
+  },
+  {
+   "users": 1,
+   "completion_tokens": 1024,
+   "wall_s": 2.1513004599983105,
+   "aggregate_tok_s": 475.99115931988604,
+   "per_stream_decode_tok_s": 486.2940919415357
+  },
+  {
+   "users": 1,
+   "completion_tokens": 1024,
+   "wall_s": 2.152128860994708,
+   "aggregate_tok_s": 475.80794001652396,
+   "per_stream_decode_tok_s": 486.2195974370946
+  },
+  {
+   "users": 8,
+   "completion_tokens": 8192,
+   "wall_s": 5.521636506993673,
+   "aggregate_tok_s": 1483.61812473966,
+   "per_stream_decode_tok_s": 194.65565354535443
+  },
+  {
+   "users": 8,
+   "completion_tokens": 8192,
+   "wall_s": 5.531679813997471,
+   "aggregate_tok_s": 1480.9244705868193,
+   "per_stream_decode_tok_s": 194.2903816671497
+  },
+  {
+   "users": 8,
+   "completion_tokens": 8192,
+   "wall_s": 5.534184452000773,
+   "aggregate_tok_s": 1480.2542399970691,
+   "per_stream_decode_tok_s": 194.21457574205644
+  }
+ ]
+}

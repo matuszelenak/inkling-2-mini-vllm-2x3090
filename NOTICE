@@ -21,8 +21,14 @@ Portions derived from other projects:
   one-kernel moe_align_block_size. Changed here: a shared-memory fit so
   the tiles run on sm_86, switches for each tuning, and the expert-GEMM
   alignment limited to the batch sizes where its output is identical to
-  the compiled op's. Added here: expert-GEMM kernel configs measured on
-  sm_86 and the draft length chosen per step from recent acceptance.
+  the compiled op's. Added here: expert-GEMM kernel configs, router
+  and attention tiles measured on sm_86, the draft length chosen per step
+  from recent acceptance, and the reduced draft vocabulary.
+  Another part is adapted from Pento95/HyperInkling (Apache-2.0,
+  https://github.com/Pento95/HyperInkling): the conv-state cache manager
+  that backs only each step's tail (SconvStateManager) and the conv
+  kernel's skipped stores into the null block. Added to it here: conv-state
+  checkpoints at the prefix-cache retention interval, and the switch.
 - tools/tests/conftest.py reproduces three fixtures from vLLM's
   tests/conftest.py.
 - tools/gsm8k_eval.py follows the chat protocol of vLLM's
@@ -30,3 +36,11 @@ Portions derived from other projects:
 - tools/tune/published_protocols.py re-implements the benchmark protocols
   of agent2x0r/inkling2-sm86-kernels (MIT) and Pento95/HyperInkling and
   sends their prompts; no code from either is included.
+- patches/draft_vocab_rank.json is a list of token ids in rank order and
+  contains no text. The counts behind it came from this model's own output
+  and from wikitext-2 (CC BY-SA 3.0), HellaSwag (MIT), War and Peace (public
+  domain, Project Gutenberg), vLLM's Python source (Apache-2.0), ggml's C
+  source (MIT) and a private tree of configs and docs.
+- tools/tune/more_protocols.py re-implements the benchmark protocols of
+  lulakien/inkling2-mini-3090-recipe and skyne98/inkling-ingine-3090 from
+  the prompts and parameters they publish; it contains none of their code.

@@ -18,7 +18,10 @@ The tuned build ([BENCH.md](../BENCH.md#tuning)).
 | File | Written by | One row is |
 |---|---|---|
 | `runs.csv`, `gsm8k.csv`, `images.csv` | the same tools as above | the final tuned image booted from `docker-compose.yml`; `runs.csv` also has a no-drafter pass |
+| `depth_accept_warpeace.jsonl`, `depth_accept.jsonl` | `../tools/tune/depth_accept.py` | one request at one context depth on the final image as shipped: prefill and decode rate, decode steps, tokens per step, acceptance by draft position. The first is on War and Peace, the second on the page-snapshot YAML the other depth rows used |
 | `long_window.csv` | `../tools/vbench.py` | one depth prompt on a text-only, long-window boot of the same image (columns as `runs.csv`; the label gives the mode and window) |
+| `conv-state-tail/` | the same tools, plus `../tools/tune/prefix_reuse.py` and `stream_beside_prefill.py` for the tables that have no file here | the current image (`-tune3`): the full suite; `prefill_by_chunk.csv` (one boot per prefill chunk size; the label names it) and the same on vLLM's conv-state layout at a 20,000-token window; `prefill_depth.csv`; `long_window.csv` (one boot per mode, the label gives mode and window); `images_large.csv`; `decode_depth_by_attention_splits.jsonl` (not adopted); `memory_stress_*.csv`; `mb_humming_prefill_*.jsonl` and `prefill_by_expert_block.csv` (expert-GEMM row blocks: the microbenchmark, and the server before and after); `final-image/` (the suite again on the final image) and `before-48-row-blocks/` (the same one change earlier); `concurrency_64_seqs.jsonl` (`--max-num-seqs 64`, with and without the drafter) |
+| `reduced-draft-vocab/` | the same tools, plus `../tools/tune/sampling_check.py` | the previous image (`-tune2`): the full suite, the previous build's step bench from the same morning, and the token ids of 6,000 seeded continuations on each build |
 | `before-router-and-tiles/` | the same tools | the same suite on the tuned build before its last three changes (router tile, attention decode tile, full-attention prefill tile). `gsm8k_run2.csv` and `concurrency_final_run2.jsonl` are repeats after a restart |
 | `step_cost_by_batch.jsonl` | `../tools/tune/bench_concurrency.py --ignore-eos` with every verified draft accepted | one batch size at one verified-draft count; ms per step = 1000 × batch × (drafts + 1) / aggregate tok/s |
 | `policy_all_batches_gsm8k.csv`, `policy_all_batches_concurrency.jsonl` | as above | the draft-length policy applied at every batch size (not adopted) |
@@ -51,7 +54,7 @@ Arm labels in `steps_by_arm.jsonl`: `stock` and `overlay off` are the untuned po
 
 | Column | Meaning |
 |---|---|
-| `workload` | one of the four short prompts in `vbench.py`, or `deep N`: an N-token prompt of source and docs with five planted facts |
+| `workload` | one of the four short prompts in `vbench.py`, or `deep N`: an N-token prompt of filler text with five planted facts (what the filler was: see below) |
 | `temperature` | sampling temperature of the request |
 | `prompt_n`, `gen_n` | `usage.prompt_tokens` and `usage.completion_tokens` |
 | `ttft_s` | seconds from request to the first streamed token (content, reasoning or tool call) |
@@ -60,7 +63,7 @@ Arm labels in `steps_by_arm.jsonl`: `stock` and `overlay off` are the untuned po
 | `needles`, `found` | planted facts and how many came back as `NAME=NUMBER` (deep rows) |
 | `finish_reason`, `wall_s` | as returned; client wall time |
 
-Every request starts with a unique line, so the prefix cache does not help prefill. The deep rows used the source and docs of a private config repo as filler text; `vbench.py` now takes the tree as `--corpus-dir`.
+Every request starts with a unique line, so the prefix cache does not help prefill. The deep rows were meant to use the source and docs of a private config repo as filler. The reader took files in path order and a hidden directory of browser page snapshots (YAML accessibility-tree dumps, about one line in five repeating an earlier one) sorted first, so the prompts up to 2026-11-22 are that YAML. On plain prose prefill measures 2% to 3% lower and drafter-on decode at depth 7% to 14% lower (`tuning/depth_accept_warpeace.jsonl` against `tuning/depth_accept.jsonl`); retrieval was not re-run on prose. `vbench.py` takes the tree as `--corpus-dir` and now skips hidden files and directories.
 
 ## gsm8k.csv
 

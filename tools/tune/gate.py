@@ -34,8 +34,11 @@ def score(url, ids):
 
 def corpus_ids(url, root, n):
     parts = []
-    for f in sorted(pathlib.Path(root).rglob("*")):
-        if f.suffix in SUFFIXES and not (SKIP & set(f.parts)) and f.is_file():
+    root = pathlib.Path(root)
+    for f in sorted(root.rglob("*")):
+        # hidden files and directories are skipped: they sort first and would become the whole prompt
+        hidden = any(p.startswith(".") for p in f.relative_to(root).parts)
+        if f.suffix in SUFFIXES and not (SKIP & set(f.parts)) and not hidden and f.is_file():
             parts.append(f"===== {f.name} =====\n{f.read_text(errors='ignore')}")
     text = "\n\n".join(parts)[: n * 8]
     return post(url, "/tokenize", {"prompt": text, "add_special_tokens": False})["tokens"][:n]

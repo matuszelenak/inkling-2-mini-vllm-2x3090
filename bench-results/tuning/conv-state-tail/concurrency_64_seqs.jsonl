@@ -1,0 +1,8 @@
+{"label": "64 seqs, drafter 7", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 777.6158444372637, "per_stream_tps": 108.70963032201003}
+{"label": "64 seqs, drafter 7", "concurrency": 16, "kind": "mixed", "tokens": 8192, "agg_tps": 1166.670798985437, "per_stream_tps": 82.97492975338206}
+{"label": "64 seqs, drafter 7", "concurrency": 32, "kind": "mixed", "tokens": 16384, "agg_tps": 1633.9634135401006, "per_stream_tps": 59.65586010321904}
+{"label": "64 seqs, drafter 7", "concurrency": 64, "kind": "mixed", "tokens": 32768, "agg_tps": 2058.1538227420992, "per_stream_tps": 37.512332813232995}
+{"label": "64 seqs, drafter 0", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 627.877979354864, "per_stream_tps": 78.59835139171099}
+{"label": "64 seqs, drafter 0", "concurrency": 16, "kind": "mixed", "tokens": 8192, "agg_tps": 965.9061316502975, "per_stream_tps": 60.41886985776965}
+{"label": "64 seqs, drafter 0", "concurrency": 32, "kind": "mixed", "tokens": 16384, "agg_tps": 1391.8294077281269, "per_stream_tps": 44.30081177079918}
+{"label": "64 seqs, drafter 0", "concurrency": 64, "kind": "mixed", "tokens": 32768, "agg_tps": 2113.554363511113, "per_stream_tps": 34.00728280220803}
