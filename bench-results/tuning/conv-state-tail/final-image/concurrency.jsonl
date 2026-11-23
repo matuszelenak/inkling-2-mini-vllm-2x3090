@@ -1,0 +1,4 @@
+{"label": "candidate image tune3 (conv-state tail, 8192 chunks, 64- and 48-row expert blocks), compose as shipped", "concurrency": 1, "kind": "mixed", "tokens": 512, "agg_tps": 269.66976823794613, "per_stream_tps": 269.1430694718564}
+{"label": "candidate image tune3 (conv-state tail, 8192 chunks, 64- and 48-row expert blocks), compose as shipped", "concurrency": 2, "kind": "mixed", "tokens": 1024, "agg_tps": 356.90428884222274, "per_stream_tps": 194.73988601658942}
+{"label": "candidate image tune3 (conv-state tail, 8192 chunks, 64- and 48-row expert blocks), compose as shipped", "concurrency": 4, "kind": "mixed", "tokens": 2048, "agg_tps": 534.591480750017, "per_stream_tps": 147.51254240732084}
+{"label": "candidate image tune3 (conv-state tail, 8192 chunks, 64- and 48-row expert blocks), compose as shipped", "concurrency": 8, "kind": "mixed", "tokens": 4096, "agg_tps": 769.9494587523327, "per_stream_tps": 105.70413911080169}

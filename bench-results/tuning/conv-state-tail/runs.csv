@@ -1,0 +1,5 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",code greedy,0.0,79,0.05,1466.7,512,251.99,,,length,2.1
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",code temp1,1.0,78,0.05,1447.6,512,210.78,,,length,2.5
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",prose greedy,0.0,74,0.05,1435.8,512,205.12,,,length,2.5
+"candidate image tune3 (conv-state tail, 8192 chunks), compose as shipped",json tools greedy,0.0,112,0.05,2048.9,512,295.00,,,length,1.8

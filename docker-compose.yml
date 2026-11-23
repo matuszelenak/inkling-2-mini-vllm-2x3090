@@ -12,17 +12,17 @@
 # without a bridge have not been tested with this file (NOTES.md, "Other
 # setups").
 #
-# Measured 2026-11-22 with the tuning patch (BENCH.md): 143 tok/s decode
-# without the drafter and 182-328 with it; 134 tok/s at 24K depth, 107 at
-# 120K; prefill 6,700 tok/s at 24K and 5,170 at 120K; 778 tok/s aggregate at
-# 8 requests; GSM8K-200 97.0% (194 to 196 of 200 across runs).
+# Measured 2026-11-23 with the tuning patch (BENCH.md): 143 tok/s decode
+# without the drafter and 184-328 with it; 134 tok/s at 24K depth, 107 at
+# 120K; prefill 7,630 tok/s at 24K and 5,860 at 120K; 747-778 tok/s aggregate
+# at 8 requests; GSM8K-200 96.5-98.0% (193 to 196 of 200 across runs).
 # ============================================================================
 services:
   vllm:
     build:
       context: .
       dockerfile: Dockerfile
-    image: inkling-2-mini-vllm-2x3090:g7cb5dae22-tune2
+    image: inkling-2-mini-vllm-2x3090:g7cb5dae22-tune3
     container_name: vllm-inkling-2-mini-26b-nvfp4-sm86
     command:
       - --model
@@ -37,20 +37,30 @@ services:
       - --tensor-parallel-size
       - "2"
       # === CONTEXT ===
-      # The KV pool at these settings is 223,030 tokens. 196,608 lets one
+      # The KV pool at these settings is 246,986 tokens. 196,608 lets one
       # request use most of it; filled to 190K in testing. Native is
       # 1,048,576. Text only, the pool is larger: 262,144 with the drafter
       # and 368,640 without it were booted and filled (NOTES.md, "Long
       # windows").
       - --max-model-len
       - "196608"
-      # 2048, and not more: the KV planner reserves per-request headroom on
-      # all 40 sliding-window caches in proportion to this. At 8192 a single
-      # 196K request needs 18.5 GiB of KV and the server refuses to start.
-      # Also the image ceiling: an image must fit the encoder cache (2,704
-      # tokens, about 2080x2080 px); larger images get a clean HTTP 400.
+      # The prefill chunk. 8192 prefills 13% faster than 2048 at every depth;
+      # 16384 adds 2% and takes most of the KV pool (BENCH.md). What 8192
+      # costs: the pool is 246,986 tokens instead of 391,858 at 2048, and
+      # while one request prefills a long prompt the others get a token
+      # batch about every 1.3 s instead of every 0.4 s.
+      # Needs the tuning patch's conv-state cache: with INKLING_SM86_TUNE
+      # set to none, or to a list without "convtail", only 2048 boots.
+      # Also the image ceiling: an image must fit the encoder cache (8,192
+      # tokens, about 3584x3584 px); larger images get a clean HTTP 400.
       - --max-num-batched-tokens
-      - "2048"
+      - "8192"
+      # Keep reusable state every 512 tokens of a prompt, so a request that
+      # shares a prefix with an earlier one (a system prompt, tool
+      # definitions) takes it from the cache up to the last such point.
+      # vLLM's default, 0, keeps that state only where a prompt ended.
+      - --prefix-cache-retention-interval
+      - "512"
       # 8 concurrent requests. 16 also boots (1,120 tok/s aggregate) with a
       # slightly smaller KV pool.
       - --max-num-seqs

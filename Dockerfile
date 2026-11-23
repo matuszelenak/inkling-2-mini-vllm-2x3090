@@ -20,7 +20,9 @@ COPY install_sm86_kernels.py apply_sm86_patch.py patches/sm86-tune.diff patches/
 #    uses; Triton emits no griddepcontrol and requests no PDL launch below
 #    sm_90.
 # 3. Tuning (patches/sm86-tune.diff, applied with no fuzz): faster decode and
-#    prefill on Ampere. INKLING_SM86_TUNE=none at run time switches it off.
+#    prefill on Ampere, and a conv-state cache that leaves room for 8,192-token
+#    prefill chunks. INKLING_SM86_TUNE=none at run time switches it off (and
+#    then needs --max-num-batched-tokens 2048).
 #    patches/draft_vocab_rank.json is the token ranking its reduced draft
 #    vocabulary reads (English text and code; NOTES.md, "Tuning").
 RUN set -eux; \
@@ -42,6 +44,8 @@ RUN set -eux; \
         "$site/vllm/models/inkling2/nvidia/ops/moe_sm90.py" \
         "$site/vllm/models/inkling2/nvidia/ops/moe_align_small.py" \
         "$site/vllm/models/inkling2/nvidia/ops/attention_sm90.py" \
+        "$site/vllm/models/inkling2/nvidia/ops/sconv.py" \
+        "$site/vllm/models/inkling/nvidia/sconv_swa_attn.py" \
         "$site/vllm/v1/core/sched/scheduler.py" \
         "$site/vllm/v1/spec_decode/dynamic/adaptive_k.py" \
         "$site/triton/language/extra/cuda/gdc.py" \

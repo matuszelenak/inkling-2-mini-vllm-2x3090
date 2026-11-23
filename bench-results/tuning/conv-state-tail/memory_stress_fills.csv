@@ -1,0 +1,3 @@
+label,workload,temperature,prompt_n,ttft_s,pp_tok_s,gen_n,tg_tok_s,needles,found,finish_reason,wall_s
+stress,deep 190000,0.0,190177,37.77,5034.6,294,249.20,5,5,stop,39.0
+stress,deep 190000,0.0,190178,37.94,5013.2,217,299.20,5,5,stop,38.7

@@ -24,6 +24,11 @@ Portions derived from other projects:
   the compiled op's. Added here: expert-GEMM kernel configs, router
   and attention tiles measured on sm_86, the draft length chosen per step
   from recent acceptance, and the reduced draft vocabulary.
+  Another part is adapted from Pento95/HyperInkling (Apache-2.0,
+  https://github.com/Pento95/HyperInkling): the conv-state cache manager
+  that backs only each step's tail (SconvStateManager) and the conv
+  kernel's skipped stores into the null block. Added to it here: conv-state
+  checkpoints at the prefix-cache retention interval, and the switch.
 - tools/tests/conftest.py reproduces three fixtures from vLLM's
   tests/conftest.py.
 - tools/gsm8k_eval.py follows the chat protocol of vLLM's

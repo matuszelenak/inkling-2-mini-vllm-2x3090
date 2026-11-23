@@ -13,6 +13,9 @@ What the tuning in `patches/sm86-tune.diff` was measured with. Results: [BENCH.m
 | `collect_outputs.py`, `build_draft_vocab.py` | against a server | model output across kinds of task, and the token ranking for the reduced draft vocabulary built from it and from text you supply |
 | `lists_bench.py` | against a server | very predictable output (numbered lists) at 1 and 8 requests |
 | `depth_accept.py` | against a server | prefill, decode and draft acceptance by context depth, same task at every depth |
+| `prefix_reuse.py` | against a server | prompt tokens taken from the prefix cache by requests that share a prefix, and whether state resumed from the cache matches another server's exactly |
+| `stream_beside_prefill.py` | against a server | one stream's rate and longest pause while another request prefills a cold prompt |
+| `test_conv_tail.py` | inside the image, no GPU | unit test of the conv-state block manager: what a prefill chunk holds, admission counts, rejected drafts, where prefix hits land |
 | `ksum.py` | on profiler traces | GPU kernel time per decode step or prefill chunk, by kernel |
 | `mb_gemv.py` | inside the image, one free GPU | every small-matmul tile config that fits the card, per weight shape, against cuBLAS |
 | `mb_humming.py` | inside the image, one free GPU | expert-GEMM kernel configs at the real layer shape, against the library's heuristic |
