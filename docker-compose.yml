@@ -22,7 +22,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: inkling-2-mini-vllm-2x3090:g7cb5dae22-tune3
+    image: inkling-2-mini-vllm-2x3090:g7cb5dae22-tune3-fp8kv
     container_name: vllm-inkling-2-mini-26b-nvfp4-sm86
     command:
       - --model
@@ -69,7 +69,12 @@ services:
       # concurrent requests.
       - --gpu-memory-utilization
       - "0.92"
-      # KV stays bf16: the fp8 KV kernels in this build need sm_89+.
+      # KV is bf16. Uncomment the two lines below for an fp8 KV cache (this
+      # fork's patches/sm86-fp8kv.diff): about 1.7x the tokens (416,866
+      # instead of 243,795 at these settings), prefill ~11% slower at 120K,
+      # decode the same (NOTES.md, "FP8 KV cache").
+      # - --kv-cache-dtype
+      # - fp8
       # === PARSERS ===
       - --reasoning-parser
       - inkling

@@ -1,0 +1,216 @@
+FP8 KV cache on sm_8x, applied after sm86-tune.diff (patch -p1 --fuzz=0). Only --kv-cache-dtype fp8 takes it.
+
+The image accepts fp8 KV on SM12x only: its attention kernels convert E4M3 with `cvt` instructions that need
+sm_89+, and Triton has no fp8 pointer type below that. Here the cache is passed as bytes: the attention
+prologue (ops/sconv.py) encodes unit-scale E4M3 in integer maths (round to nearest even, saturating at 448, the
+same byte `cvt.rn.satfinite.e4m3x2.f32` gives), and the attention kernel (ops/attention_sm90.py) decodes
+exactly with a shift into an fp32 word and a 2**120 scale. The image's own attention kernel and the tuning's
+Ampere paths stay as they are; bf16 runs do not reach any changed line.
+
+The conv-state manager of sm86-tune.diff assumes prefix hits on `block_size` tokens. With an fp8 target cache
+next to the bf16 DSpark draft cache, the attention pages hold 128 tokens and hits land on 128, so its tail is
+sized for that (sconv_swa_attn.py).
+
+Measured on 2x RTX 3090: NOTES.md, "FP8 KV cache".
+
+diff -ruN a/vllm/models/inkling/nvidia/sconv_swa_attn.py b/vllm/models/inkling/nvidia/sconv_swa_attn.py
+--- a/vllm/models/inkling/nvidia/sconv_swa_attn.py
++++ b/vllm/models/inkling/nvidia/sconv_swa_attn.py
+@@ -73,6 +73,18 @@
+     return interval
+ 
+ 
++def _hit_alignment_tokens(vllm_config: VllmConfig) -> int:
++    """Where prefix hits can land: the scheduler block, the largest block of
++    any KV group. An fp8 cache halves the bytes per token of the target's
++    attention pages, so they hold twice `block_size` tokens; the DSpark
++    draft's cache stays bf16 (an upper bound when there is no draft: the
++    assert in `SconvStateManager` only needs the tail to cover it)."""
++    block_size = vllm_config.cache_config.block_size
++    if str(vllm_config.cache_config.cache_dtype).startswith("fp8"):
++        return 2 * block_size
++    return block_size
++
++
+ class SconvStateManager(DFlashSlidingWindowManager):
+     """Conv-state cache that backs only each step's tail, plus sparse checkpoints.
+ 
+@@ -393,6 +405,6 @@
+             num_speculative_tokens=vllm_config.num_speculative_tokens,
+             max_in_flight_steps=vllm_config.max_concurrent_batches,
+             num_lookahead_tokens=vllm_config.num_lookahead_tokens,
+-            hit_alignment_tokens=vllm_config.cache_config.block_size,
++            hit_alignment_tokens=_hit_alignment_tokens(vllm_config),
+             checkpoint_tokens=_conv_checkpoint_tokens(vllm_config),
+         )
+diff -ruN a/vllm/models/inkling2/nvidia/attention.py b/vllm/models/inkling2/nvidia/attention.py
+--- a/vllm/models/inkling2/nvidia/attention.py
++++ b/vllm/models/inkling2/nvidia/attention.py
+@@ -50,7 +50,7 @@
+ 
+ from ..configs import Inkling2ModelConfig
+ from .lora import add_linear_lora
+-from .ops import use_sm100_kernels
++from .ops import use_fp8_casts, use_sm100_kernels
+ from .ops.attention import (
+     _INKLING2_FA4_REL_ATTENTION_KERNEL,
+     gate_sink,
+@@ -294,6 +294,11 @@
+         supported: tuple[str, ...] = ("auto", "bfloat16")
+         if current_platform.is_device_capability_family(120):
+             supported += ("float16", "fp8", "fp8_e4m3")
++        elif current_platform.is_device_capability_family(80):
++            # sm_8x: no E4M3 conversion instruction and no fp8 pointer type in
++            # Triton. The prologue encodes the bytes and the attention kernels
++            # decode them in integer maths (ops/sconv.py, ops/attention_sm90.py).
++            supported += ("fp8", "fp8_e4m3")
+         if cache_dtype not in supported:
+             raise ValueError(f"Inkling2 KV cache dtype must be one of {supported}")
+         self.fp8_kv = cache_dtype in ("fp8", "fp8_e4m3")
+@@ -362,7 +367,9 @@
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+         if self.fp8_kv:
+             # Every loop pass owns byte storage containing unit-scale E4M3 KV.
+-            kv_cache = kv_cache.view(torch.float8_e4m3fn)
++            kv_cache = kv_cache.view(
++                torch.float8_e4m3fn if use_fp8_casts() else torch.uint8
++            )
+         key_cache, value_cache = kv_cache.transpose(1, 2).split(self.head_dim, dim=-1)
+         return (
+             canonicalize_singleton_dim_strides(key_cache),
+diff -ruN a/vllm/models/inkling2/nvidia/ops/attention_sm90.py b/vllm/models/inkling2/nvidia/ops/attention_sm90.py
+--- a/vllm/models/inkling2/nvidia/ops/attention_sm90.py
++++ b/vllm/models/inkling2/nvidia/ops/attention_sm90.py
+@@ -29,6 +29,10 @@
+ # The query tile of tml_fa4 that shears the relative logits.
+ _SHEAR_TILE = tl.constexpr(128)
+ 
++# `cvt.rn.f16x2.e4m3x2` needs sm_89+ (and Triton cannot type an fp8 pointer
++# below it): sm_8x reads the E4M3 cache as bytes and decodes in software.
++_HW_FP8_CVT = tl.constexpr(current_platform.has_device_capability((8, 9)))
++
+ # Output of `_rel_attention_kernel`: fp32 output and natural-log LSE (the
+ # tml_fa4 replacement), the gated bf16 output, or fp32 split partials with
+ # log2 LSEs (merged by `_rel_decode_combine_kernel`).
+@@ -43,7 +47,27 @@
+ 
+ 
+ @triton.jit
++def _e4m3_to_f32(byte):
++    """Exact E4M3FN byte -> fp32: the sign and the 7 exponent/mantissa bits
++    move into an fp32 word and are scaled by 2**120 (exponent bias 7 -> 127),
++    which also makes E4M3 subnormals (fp32 subnormals before the scale)
++    normal. 0x7F, the format's NaN, decodes as 480; the cache holds values
++    clipped to 448."""
++    u = byte.to(tl.uint32)
++    bits = ((u & 0x7F) << 20) | ((u & 0x80) << 24)
++    return bits.to(tl.float32, bitcast=True) * 1.329227995784916e36
++
++
++@triton.jit
+ def _load_fp8_kv(ptr, offsets, mask, dtype: tl.constexpr, D: tl.constexpr):
++    if not _HW_FP8_CVT:
++        cols = tl.arange(0, D)
++        byte = tl.load(
++            ptr.to(tl.pointer_type(tl.uint8)) + offsets[:, None] + cols[None, :],
++            mask=mask[:, None],
++            other=0,
++        )
++        return _e4m3_to_f32(byte).to(dtype)
+     # Load each E4M3 pair once, retaining 16-bit packing for BF16 MMA order.
+     half = tl.arange(0, D // 2)
+     pair = tl.load(
+@@ -309,6 +333,10 @@
+     page, num_kv_heads = key_cache.shape[1:3]
+     group = num_heads // num_kv_heads
+     assert key_cache.stride() == value_cache.stride() and key_cache.stride(3) == 1
++    if key_cache.element_size() == 1 and not _HW_FP8_CVT:
++        # No fp8 pointer argument below sm_89: pass the E4M3 bytes as uint8.
++        key_cache = key_cache.view(torch.uint8)
++        value_cache = value_cache.view(torch.uint8)
+     assert q.stride(2) == 1
+     assert mode != MODE_GATED or num_splits == 1
+     draft = rel_logits is None
+diff -ruN a/vllm/models/inkling2/nvidia/ops/__init__.py b/vllm/models/inkling2/nvidia/ops/__init__.py
+--- a/vllm/models/inkling2/nvidia/ops/__init__.py
++++ b/vllm/models/inkling2/nvidia/ops/__init__.py
+@@ -4,6 +4,16 @@
+ 
+ 
+ @functools.cache
++def use_fp8_casts() -> bool:
++    """Whether kernels may convert to and from `tl.float8e4nv` (SM89+). Triton
++    rejects the type below that, so the KV cache is encoded and decoded as
++    bytes with integer maths there."""
++    from vllm.platforms import current_platform
++
++    return current_platform.has_device_capability(89)
++
++
++@functools.cache
+ def use_sm100_kernels() -> bool:
+     """Whether to run the Blackwell kernels (tml_fa4, tcgen05 attention,
+     TRT-LLM-gen expert GEMMs, e2m1 conversions). Hopper uses Humming experts;
+diff -ruN a/vllm/models/inkling2/nvidia/ops/nvfp4.py b/vllm/models/inkling2/nvidia/ops/nvfp4.py
+--- a/vllm/models/inkling2/nvidia/ops/nvfp4.py
++++ b/vllm/models/inkling2/nvidia/ops/nvfp4.py
+@@ -285,3 +285,33 @@
+         launch_pdl=True,
+     )
+     return values, scales, amax
++
++
++@triton.jit
++def _e4m3(x):
++    """The E4M3 byte (sign in bit 7) of fp32 `x`, rounded to nearest even and
++    saturated at 448, and its value: the software form of
++    `cvt.rn.satfinite.e4m3x2.f32`, which sm_8x has no instruction for.
++
++    `x` in `[2**e, 2**(e+1))` rounds to a multiple of `2**(e-3)` (of `2**-9`
++    below `2**-6`, the smallest normal), so the E4M3 grid is the integer grid
++    of `x / 2**max(e - 3, -9)`."""
++    a = tl.minimum(tl.abs(x), 448.0)
++    exponent = (a.to(tl.int32, bitcast=True) >> 23) - 127
++    quantum = tl.maximum(exponent - 3, -9)
++    unit = ((quantum + 127) << 23).to(tl.float32, bitcast=True)
++    scaled = a / unit
++    # Round to nearest even through the fp32 mantissa (|scaled| < 16).
++    scaled = (scaled + 12582912.0) - 12582912.0
++    # Codes 1..7 of the subnormal range, else 8 + mantissa at exponent byte
++    # `quantum + 10`; added, not or-ed, so that a mantissa of 8 carries into
++    # the next exponent.
++    normal = (quantum > -9) | (scaled >= 8.0)
++    code = tl.where(
++        normal,
++        ((quantum + 10) << 3) + (scaled.to(tl.int32) - 8),
++        scaled.to(tl.int32),
++    )
++    sign = x.to(tl.int32, bitcast=True) >> 31
++    value = scaled * unit
++    return (code | (sign << 7)).to(tl.uint8), tl.where(sign != 0, -value, value)
+diff -ruN a/vllm/models/inkling2/nvidia/ops/sconv.py b/vllm/models/inkling2/nvidia/ops/sconv.py
+--- a/vllm/models/inkling2/nvidia/ops/sconv.py
++++ b/vllm/models/inkling2/nvidia/ops/sconv.py
+@@ -25,6 +25,7 @@
+ import torch
+ 
+ from vllm.models.inkling2.nvidia.ops.norm import qr_clip_rel_tokens, rsqrt
++from vllm.models.inkling2.nvidia.ops.nvfp4 import _e4m3
+ from vllm.triton_utils import tl, triton
+ 
+ 
+@@ -811,7 +812,13 @@
+         + head * stride_kv_h
+         + d_idx[None, :]
+     )
+-    tl.store(dst, y.to(cache.dtype.element_ty), mask=(kv_slot >= 0)[:, None])
++    if cache.dtype.element_ty == tl.uint8:
++        # Unit-scale E4M3 KV on sm_8x (no E4M3 type): the byte that
++        # `cvt.rn.satfinite.e4m3x2.f32` would store, encoded in software.
++        code, _ = _e4m3(y)
++        tl.store(dst, code, mask=(kv_slot >= 0)[:, None])
++    else:
++        tl.store(dst, y.to(cache.dtype.element_ty), mask=(kv_slot >= 0)[:, None])
+ 
+ 
+ # From this many tokens, q/r run in their own launch (8 tokens per program)

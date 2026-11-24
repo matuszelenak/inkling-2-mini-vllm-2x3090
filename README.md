@@ -72,6 +72,8 @@ The checkpoint is read from `~/.cache/huggingface` and never downloaded at boot,
 
 - The server takes 8 requests at once. While one of them is prefilling a long prompt, the others slow to a batch of tokens about every 1.3 seconds until it's done.
 
+- **This fork** adds an optional fp8 KV cache (`--kv-cache-dtype fp8`, commented in `docker-compose.yml`): about 1.7x the KV tokens, prefill about 11% slower at 120K, decode the same. Measured on a pair without an NVLink bridge; see [NOTES.md](NOTES.md#fp8-kv-cache).
+
 - vLLM has its own Ampere PR open ([vllm-project/vllm#69165](https://github.com/vllm-project/vllm/pull/69165)). Once that ships in a release, I'll likely converge the configuration onto it.
 
 ## License

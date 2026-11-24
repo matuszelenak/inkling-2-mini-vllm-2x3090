@@ -23,7 +23,7 @@ How the Ampere port of Inkling 2 Mini works, what the tuning changed, how it com
 Blockers 1–5 are `apply_sm86_patch.py`: anchored edits, idempotent, `.orig` copies kept, `--revert` to undo.
 
 - **Not needed:** the expert GEMMs (the Humming library supports BF16 activations from sm_80 and JIT-compiles for the card), the attention kernel (Triton, fits sm_86's shared memory as written), NVFP4 rounding (software path), all-reduce (the model's fused NVLink-multicast collective is skipped off capability 9/10 and vLLM's own custom all-reduce takes over).
-- **Not available with this port:** fp8 KV cache (the kernels in this build use Triton's `fp8e4nv`, sm_89+), and the fused all-reduce. #69165 adds a software fp8 path.
+- **Not available with this port:** the fused all-reduce. The fp8 KV cache (the kernels in this build use Triton's `fp8e4nv`, sm_89+) is added by this fork's `patches/sm86-fp8kv.diff` ([FP8 KV cache](#fp8-kv-cache)); #69165 adds a software fp8 path upstream.
 
 ## Tuning
 
@@ -157,7 +157,50 @@ The shipped config loads the vision tower and the drafter, prefills in 8,192-tok
 - **Not the default** because the long modes give up prefill speed (2,048-token chunks), then images, then the drafter, and a full window takes minutes to prefill.
 - **Decode at these depths:** 56 tok/s without the drafter after the 578K prompt. With the drafter 127–239 on these short, predictable answers; on plain prose expect about 130 at 190K and less beyond.
 - **Before the conv-state change** the text-only ceilings were 262,144 with the drafter and 368,640 without ([BENCH.md](BENCH.md#long-windows-1)).
-- **Software fp8 KV cache** (the approach of #69165, tried on an earlier build without the drafter): the pool grew to 374,234 tokens with the vision tower loaded and retrieval stayed 5 / 5 to 120K, but prefill fell from 7,100 to 2,306 tok/s at 8K and decode from 143 to 123 tok/s. Not adopted; the patch does not include it.
+- **Software fp8 KV cache** (the approach of #69165, tried on an earlier build without the drafter): the pool grew to 374,234 tokens with the vision tower loaded and retrieval stayed 5 / 5 to 120K, but prefill fell from 7,100 to 2,306 tok/s at 8K and decode from 143 to 123 tok/s. Not adopted in `sm86-tune.diff`. This fork's `sm86-fp8kv.diff` keeps the tuned attention kernel and costs much less ([FP8 KV cache](#fp8-kv-cache)).
+
+## FP8 KV cache
+
+`patches/sm86-fp8kv.diff`, applied after the tuning patch. It is used only with `--kv-cache-dtype fp8` added to the command in `docker-compose.yml`; without it the server runs the bf16 cache as before and reaches none of the changed lines.
+
+- **How:** the image allows an fp8 cache only on SM12x, because its kernels convert E4M3 with `cvt` instructions from sm_89 and Triton has no fp8 pointer type below that. Here the cache is passed as bytes. The attention prologue encodes unit-scale E4M3 in integer maths (round to nearest even, saturating at 448), and the tuned attention kernel decodes it exactly: the 7 exponent and mantissa bits shift into an fp32 word, which is scaled by 2^120. The decoder matches all 256 codes bit for bit on the GPU. The DSpark draft keeps a bf16 cache.
+- **Conv-state manager:** with an fp8 target cache next to the bf16 draft cache, the attention pages hold 128 tokens, not 64, and prefix hits land on 128. The tuning patch's manager sized its tail for 64 and refused to boot (`conv-state tails shorter than the prefix-hit alignment`). This patch sizes the tail for 128 under fp8.
+- **Where it was measured:** a different pair than the rest of this file, 2× RTX 3090 **without** an NVLink bridge (PCIe; `--disable-custom-all-reduce`, `VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`). bf16 was measured on the same pair with the same flags for each comparison. The depth prompts are `tools/vbench.py` on vLLM's Python source, not War and Peace, so the depth rows below compare with each other and not with the prose rows above.
+
+Shipped flags (`--max-model-len 196608`, 8,192-token chunks, `--max-num-seqs 8`, `--gpu-memory-utilization 0.92`, images and drafter on), one boot each:
+
+| | bf16 | fp8 |
+|---|---|---|
+| KV pool | 243,795 | 416,866 (1.71×) |
+| Prefill / decode at 24K | 5,557 / 420 tok/s | 5,614 / 437 tok/s |
+| Prefill / decode at 120K | 4,869 / 366 tok/s | 4,317 / 365 tok/s |
+| Decode on 8 short prompts, greedy, 512 tokens, mean | 221 tok/s | 218 tok/s |
+| Facts found at 24K / 120K | 5 / 5, 5 / 5 | 5 / 5, 5 / 5 |
+
+Long window, the "Images, drafter, small chunks" row of [Long windows](#long-windows) (`--max-num-batched-tokens 2048`, `--max-num-seqs 4`, `--gpu-memory-utilization 0.92`, images and drafter on), booted on the same pair:
+
+| | bf16 | fp8 |
+|---|---|---|
+| `--max-model-len` | 425,984 | 737,280 |
+| KV pool | 431,446 | 776,647 (1.80×) |
+
+The fp8 window booted but was not filled with a prompt of that length. A request for the native 1,048,576 fails vLLM's second memory check, after warmup, even at 0.93; the early estimate in that error is too high, so read the pool of a boot that completes.
+
+Correctness:
+
+- **`tools/tune/gate.py check`**, against a long reference collected on the bf16 server:
+  - Check 1 fails narrowly. The reference token is rank 1 for 0.9772 of short-prefill positions, against a threshold of 0.98 (bf16 on the same pair: 0.9837).
+  - Checks 2–4 pass. Decode against prefill is 0.9831 short and 0.9870 at depth. On the 16,000-token long prefill, top-1 matches 0.9816 of positions, the p95 logprob gap is 0.235 (threshold 0.25), and the NLL is 0.5484 against 0.5463.
+  - The gate is built to catch tunings that should not move the numbers at all; rounding K and V to E4M3 does move them.
+- **GSM8K-200**, concurrency 8, one run each: fp8 192 / 200 with 4 at the token cap, bf16 195 / 200 with 1.
+- **Conv-state cache under fp8:** `tools/tune/prefix_reuse.py exact`, comparing this build against `INKLING_SM86_TUNE` without `convtail` (vLLM's layout), both with 2,048-token chunks and `--no-async-scheduling`. All 9 requests give the same first token with a top-5 logprob gap of 0.0000, at `--prefix-cache-retention-interval` 0 and 512.
+- **`prefix_reuse.py shared`:** same as the bf16 build ([BENCH.md](BENCH.md#prefix-reuse)) on every row, except the follow-up turn: 11,392 tokens from the cache instead of 11,456, because hits land on 128-token blocks.
+
+What it costs:
+
+- **Prefill:** 11% at 120K, from the byte decode in the attention kernel. It is unchanged at 24K, and so is decode.
+- **Accuracy:** a small loss, shown by the long-prefill NLL above; GSM8K-200 cannot separate it from run-to-run noise.
+- **KV groups:** with an fp8 target cache and a bf16 draft cache the pages differ in size, so vLLM's planner gives every layer its own KV group (99 groups instead of 13). It runs; the block tables are larger. vllm#69486 gives the draft an fp8 cache on Hopper.
 
 ## Serving notes
 
@@ -191,6 +234,7 @@ Only the first two rows were run.
 | `install_sm86_kernels.py` | blocker 0: downloads the general-architecture wheel (sha256-pinned) and replaces the two libraries |
 | `apply_sm86_patch.py` | blockers 1–5 |
 | `patches/sm86-tune.diff` | the tuning: eight model files, the scheduler hook and the draft-length policy |
+| `patches/sm86-fp8kv.diff` | this fork: the fp8 KV cache on sm_8x, used only with `--kv-cache-dtype fp8` ([FP8 KV cache](#fp8-kv-cache)) |
 | `tools/preflight.py` | can this image's kernels run on the card at all: compiled kernels, patched Triton, capability helpers |
 | `tools/vbench.py` | decode / prefill / retrieval bench |
 | `tools/gsm8k_eval.py`, `tools/image_sweep.py` | GSM8K with vLLM's chat protocol; image-shape sweep |
